@@ -314,3 +314,53 @@ func TestARefreshDoesNotUndoScrolling(t *testing.T) {
 		t.Error("moving the cursor did not bring it back into view")
 	}
 }
+
+// The agents and timeline rows carry breakdowns of their own now, so the fold
+// keys have to answer for those kinds too — before, left/right/enter did nothing
+// at all on either tab.
+func TestBreakdownsOnAgentAndTimelineRows(t *testing.T) {
+	m := toolsModel()
+	m.agents = []Agent{{ID: "a1", Analyzed: true, Task: "Review the diff",
+		Report: attrib.Report{Total: 900, Slices: []attrib.Slice{
+			{Bucket: attrib.BucketToolResults, Tokens: 600},
+			{Bucket: attrib.BucketToolCalls, Tokens: 300},
+		}}}}
+	m.audit = []attrib.AuditPoint{
+		{Request: 1, Context: 100},
+		{Request: 2, Context: 900, Detail: []attrib.Item{
+			{Name: "Read user.rb", Tokens: 700},
+			{Name: "thinking", Tokens: 100},
+		}},
+	}
+
+	if !m.hasBreakdown(rowRef{kindAgent, "a1"}) {
+		t.Error("an analyzed agent reported no breakdown")
+	}
+	if !m.hasBreakdown(rowRef{kindRequest, "2"}) {
+		t.Error("a request with a detail reported no breakdown")
+	}
+	// Request 1 has no previous request to have grown from.
+	if m.hasBreakdown(rowRef{kindRequest, "1"}) {
+		t.Error("the first request claimed a breakdown")
+	}
+	if m.hasBreakdown(rowRef{kindAgent, "nope"}) {
+		t.Error("an unknown agent claimed a breakdown")
+	}
+
+	// And the rows render them.
+	m.tab = TabAgents
+	if out := m.agentsView(100); !strings.Contains(out, "tool results") {
+		t.Error("the agent's composition did not render")
+	}
+	m.tab = TabTimeline
+	out := m.timelineView(100)
+	if !strings.Contains(out, "Read user.rb") {
+		t.Error("what grew the window did not render")
+	}
+	// Folded away, it is gone but the row is not.
+	m.collapsed = map[rowRef]bool{{kindRequest, "2"}: true}
+	folded := m.timelineView(100)
+	if strings.Contains(folded, "Read user.rb") || !strings.Contains(folded, "900") {
+		t.Error("folding a request row hid the wrong thing")
+	}
+}

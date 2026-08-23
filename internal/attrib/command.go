@@ -215,3 +215,33 @@ func correctedAll(kids map[string]*Item, f float64) map[string]*Item {
 	}
 	return out
 }
+
+// toolLabel names a tool call by what it acted on, for the timeline's account of
+// why the window grew. "Read" is not an answer to that question and
+// "Read user.rb" is.
+//
+// Distinct from toolFamily, which groups a whole session's calls and so wants
+// the coarsest useful name. Here there is one call to describe.
+func toolLabel(tool string, input json.RawMessage) string {
+	if tool == "Bash" {
+		if p := toolFamily(tool, input); p != "" {
+			return tool + " " + p
+		}
+		return tool
+	}
+	var in struct {
+		Path     string `json:"file_path"`
+		Notebook string `json:"notebook_path"`
+		Pattern  string `json:"pattern"`
+		Desc     string `json:"description"`
+	}
+	if err := json.Unmarshal(input, &in); err != nil {
+		return tool
+	}
+	for _, target := range []string{in.Path, in.Notebook, in.Pattern, in.Desc} {
+		if target != "" {
+			return tool + " " + path.Base(target)
+		}
+	}
+	return tool
+}

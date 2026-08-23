@@ -170,6 +170,18 @@ func barCells(tokens, largest, width int) int {
 	return n
 }
 
+// indent wraps text to a width and pushes every line of it in by the same
+// margin. wrap alone indents the first line only, which reads as a hanging
+// paragraph rather than as something nested.
+func indent(text string, margin, width int) string {
+	lead := strings.Repeat(" ", margin)
+	var b strings.Builder
+	for _, line := range strings.Split(wrap(text, maxInt(width-margin, 20)), "\n") {
+		b.WriteString(lead + line + "\n")
+	}
+	return b.String()
+}
+
 // comma groups thousands. Context sizes run to seven figures and are unreadable
 // without it.
 func comma(n int) string {

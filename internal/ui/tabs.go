@@ -75,7 +75,7 @@ func (m Model) agentsView(w int) string {
 	)
 	// The task description is the widest useful thing here and the first to be
 	// squeezed; below that the bar goes, then the shorter columns.
-	fixed := gutter + typeW + stateW + ctxW + reqW + elapsedW + replyW + 1
+	fixed := gutter + markerW + typeW + stateW + ctxW + reqW + elapsedW + replyW + 1
 	taskW := minInt(maxInt(w-fixed-minBar, 0), 44)
 	barW := maxInt(w-fixed-taskW, 6)
 
@@ -89,7 +89,7 @@ func (m Model) agentsView(w int) string {
 
 	var b strings.Builder
 	missing := 0
-	header := pad("", gutter) + pad("agent", typeW)
+	header := pad("", gutter+markerW) + pad("agent", typeW)
 	if taskW > 0 {
 		header += pad("task", taskW)
 	}
@@ -117,14 +117,28 @@ func (m Model) agentsView(w int) string {
 			bar = faintStyle.Render(strings.Repeat("·", barW))
 		}
 
+		ref := rowRef{kindAgent, a.ID}
 		on := m.on(kindAgent, a.ID)
-		row := cursorGutter(on) + pad(selectedName(trunc(a.Label(), typeW-1), on), typeW)
+		mark := strings.Repeat(" ", markerW)
+		if m.hasBreakdown(ref) {
+			mark = foldMark(!m.collapsed[ref]) + " "
+		}
+		row := cursorGutter(on) + mark +
+			pad(selectedName(trunc(a.Label(), typeW-1), on), typeW)
 		if taskW > 0 {
 			row += pad(dimStyle.Render(trunc(a.Task, taskW-1)), taskW)
 		}
 		row += pad(state, stateW) + padLeft(ctx, ctxW) + padLeft(reqs, reqW) +
 			padLeft(dimStyle.Render(elapsedLabel(a)), elapsedW) + padLeft(reply, replyW)
 		b.WriteString(row + " " + bar + "\n")
+		if m.open(ref) {
+			b.WriteString(agentDetail(a, taskW, agentCols{
+				name: gutter + markerW + typeW + taskW + stateW,
+				num:  ctxW,
+				rest: reqW + elapsedW + replyW,
+				bar:  barW,
+			}))
+		}
 	}
 
 	b.WriteString("\n" + faintStyle.Render(wrap(
@@ -136,6 +150,39 @@ func (m Model) agentsView(w int) string {
 			"%d agent%s known only from hook events: no transcript under the session's "+
 				"subagents/ directory, so neither its type nor its context could be read.",
 			missing, plural(missing)), w)))
+	}
+	return b.String()
+}
+
+// agentCols mirrors the agent row's columns, so a nested figure lands under the
+// one it is part of rather than somewhere to the right of it.
+type agentCols struct{ name, num, rest, bar int }
+
+// agentDetail names the segments of an agent's bar.
+//
+// The bar was already the agent's own context composition — that is what
+// stackedGauge draws — but unlabelled, so it showed that a subagent had filled
+// its window without saying on what. The swatches are the category colours
+// rather than shades of one hue, because these are the categories, and they mean
+// the same thing here as on the context tab.
+func agentDetail(a Agent, taskW int, cols agentCols) string {
+	var b strings.Builder
+	for _, s := range a.Report.Slices {
+		style := lipgloss.NewStyle().Foreground(colorFor(s.Bucket))
+		// Shares and bars are of the agent's own total, not of the window. The bar
+		// above already answers how full this agent got; these answer what filled
+		// it, and against the window every category would round to one cell.
+		b.WriteString(nested(style.Render("▊"), string(s.Bucket), cols.name) +
+			padLeft(dimStyle.Render(comma(s.Tokens)), cols.num) +
+			padLeft(faintStyle.Render(sharePct(s.Tokens, a.Report.Total)), cols.rest) + " " +
+			style.Render(strings.Repeat("▊", barCells(s.Tokens, a.Report.Total, cols.bar))) + "\n")
+	}
+	// Only when the column actually cut it off, which is where the interesting
+	// half of a prompt usually starts. Repeating a task that already fits would
+	// just be the same line twice.
+	if lipgloss.Width(a.Task) > taskW-1 {
+		b.WriteString(indent(faintStyle.Render(a.Task),
+			gutter+markerW+2, cols.name+cols.num+cols.rest+cols.bar))
 	}
 	return b.String()
 }
@@ -589,9 +636,17 @@ func (m Model) timelineView(w int) string {
 	}
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Context growth per request") + "\n\n")
-	b.WriteString(faintStyle.Render(pad("", gutter)+pad("req", 6)+padLeft("context", 11)+
-		padLeft("Δ", 9)+padLeft("measured", 11)+padLeft("residual", 11)+
-		padLeft("thinking", 10)) + "\n")
+	const (
+		reqW      = 6
+		ctxW      = 11
+		deltaW    = 9
+		measuredW = 11
+		residualW = 11
+		thinkingW = 10
+	)
+	b.WriteString(faintStyle.Render(pad("", gutter+markerW)+pad("req", reqW)+
+		padLeft("context", ctxW)+padLeft("Δ", deltaW)+padLeft("measured", measuredW)+
+		padLeft("residual", residualW)+padLeft("thinking", thinkingW)) + "\n")
 
 	points := m.audit
 	prev := 0
@@ -607,20 +662,48 @@ func (m Model) timelineView(w int) string {
 			}
 			delta = style.Render(fmt.Sprintf("+%s", comma(d)))
 		}
-		on := m.on(kindRequest, fmt.Sprint(p.Request))
-		fmt.Fprintf(&b, "%s%s%s%s%s%s%s\n",
-			cursorGutter(on),
-			pad(selectedName(fmt.Sprint(p.Request), on), 6),
-			padLeft(numStyle.Render(comma(p.Context)), 11),
-			padLeft(delta, 9),
-			padLeft(dimStyle.Render(comma(p.Measured)), 11),
-			padLeft(dimStyle.Render(comma(p.Residual)), 11),
-			padLeft(dimStyle.Render(comma(p.Thinking)), 10),
+		ref := rowRef{kindRequest, fmt.Sprint(p.Request)}
+		on := m.on(kindRequest, ref.Name)
+		mark := strings.Repeat(" ", markerW)
+		if m.hasBreakdown(ref) {
+			mark = foldMark(!m.collapsed[ref]) + " "
+		}
+		fmt.Fprintf(&b, "%s%s%s%s%s%s%s%s\n",
+			cursorGutter(on), mark,
+			pad(selectedName(ref.Name, on), reqW),
+			padLeft(numStyle.Render(comma(p.Context)), ctxW),
+			padLeft(delta, deltaW),
+			padLeft(dimStyle.Render(comma(p.Measured)), measuredW),
+			padLeft(dimStyle.Render(comma(p.Residual)), residualW),
+			padLeft(dimStyle.Render(comma(p.Thinking)), thinkingW),
 		)
+		if m.open(ref) {
+			b.WriteString(requestDetail(p, gutter+markerW+reqW+ctxW, deltaW, measuredW))
+		}
 		prev = p.Context
 	}
 	b.WriteString("\n" + faintStyle.Render(
 		"residual is context minus everything measurable. If it climbs steadily, a category is being missed."))
+	return b.String()
+}
+
+// requestDetail names what landed in the window before this request.
+//
+// The columns can say the context grew by eight thousand tokens; only this can
+// say which Read did it. Shares are of what could be named rather than of the
+// jump, because the jump is exact and these are estimates — sharing them out of
+// the jump would report more than a hundred percent as often as not.
+func requestDetail(p attrib.AuditPoint, nameW, numW, shareW int) string {
+	total := 0
+	for _, it := range p.Detail {
+		total += it.Tokens
+	}
+	var b strings.Builder
+	for _, it := range p.Detail {
+		b.WriteString(nested("", it.Name, nameW) +
+			padLeft(dimStyle.Render(comma(it.Tokens)), numW) +
+			padLeft(faintStyle.Render(sharePct(it.Tokens, total)), shareW) + "\n")
+	}
 	return b.String()
 }
 

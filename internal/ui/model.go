@@ -522,19 +522,41 @@ var detailTab = map[attrib.Bucket]Tab{
 	attrib.BucketAgents:      TabAgents,
 }
 
-// hasBreakdown reports whether a row has anything folded under it.
+// hasBreakdown reports whether a row has anything folded under it. Asked of
+// every kind of row, since the fold state is keyed for all of them.
 func (m Model) hasBreakdown(ref rowRef) bool {
-	for _, s := range m.report.Slices {
-		if string(s.Bucket) != ref.Kind {
-			continue
+	switch ref.Kind {
+	case kindAgent:
+		for _, a := range m.agents {
+			if a.ID == ref.Name {
+				return len(a.Report.Slices) > 0
+			}
 		}
-		for _, it := range s.Detail {
-			if it.Name == ref.Name {
-				return len(it.Children) > 0
+	case kindRequest:
+		for _, p := range m.audit {
+			if fmt.Sprint(p.Request) == ref.Name {
+				return len(p.Detail) > 0
+			}
+		}
+	default:
+		for _, s := range m.report.Slices {
+			if string(s.Bucket) != ref.Kind {
+				continue
+			}
+			for _, it := range s.Detail {
+				if it.Name == ref.Name {
+					return len(it.Children) > 0
+				}
 			}
 		}
 	}
 	return false
+}
+
+// open reports whether a row's breakdown should be drawn: it has one, and it has
+// not been folded away.
+func (m Model) open(ref rowRef) bool {
+	return m.hasBreakdown(ref) && !m.collapsed[ref]
 }
 
 // dismissAll marks every failure the hooks tab is currently showing as seen.

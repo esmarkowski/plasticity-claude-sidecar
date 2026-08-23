@@ -406,6 +406,16 @@ func cursorGutter(on bool) string {
 	return strings.Repeat(" ", gutter)
 }
 
+// nested indents a row under its parent, with a swatch when there is a bar above
+// for it to point at.
+func nested(swatch, name string, w int) string {
+	lead := strings.Repeat(" ", gutter) + "  "
+	if swatch != "" {
+		lead += swatch + " "
+	}
+	return pad(lead+trunc(name, maxInt(w-lipgloss.Width(lead), 4)), w)
+}
+
 // selectedName styles a row's label so the selection is legible without a
 // background: an inner style resets the background, so a highlighted row would
 // come out striped wherever the row has colour of its own.
