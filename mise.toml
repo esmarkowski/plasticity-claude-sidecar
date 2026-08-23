@@ -1,0 +1,50 @@
+# Every tool version this project uses lives here. No `latest` anywhere: two
+# machines that run `mise install` a month apart get the same toolchain, so a
+# difference in behavior between them is never the tooling.
+
+[tools]
+go = "1.27.0"
+# Only used by `sidecar install` for the interactive hook-registration prompts.
+gum = "2.0.0"
+golangci-lint = "2.13.1"
+# Drives the hot-reload dev loop.
+watchexec = "2.6.1"
+
+[tasks.build]
+description = "Build the sidecar binary into ./bin"
+run = "go build -o bin/sidecar ./cmd/sidecar"
+
+[tasks.install]
+description = "Build and install to ~/.local/bin, where the hooks reference it by absolute path"
+run = "go build -o $HOME/.local/bin/sidecar ./cmd/sidecar"
+
+[tasks.test]
+description = "Run the test suite against the transcript fixtures"
+run = "go test ./..."
+
+[tasks.lint]
+run = "golangci-lint run"
+
+[tasks.bench]
+description = "Measure per-hook emit overhead — it is paid on every hook of every turn"
+# Not hyperfine: it publishes no darwin-arm64 asset, so mise resolves it to the
+# x86_64 build and it will not run here at all.
+run = "go test -run '^$' -bench BenchmarkEmit -benchtime 200x ./cmd/sidecar"
+
+[tasks.report]
+description = "Plain-text context attribution for the active session"
+run = "bin/sidecar report"
+
+[tasks.watch]
+description = "Run the dashboard in this terminal instead of spawning a Ghostty window"
+run = "bin/sidecar watch --follow"
+
+[tasks.dev]
+description = "Hot-reload loop: rebuild and restart the dashboard on every source change"
+run = """
+watchexec --restart --stop-signal SIGTERM --stop-timeout 2s \
+  --watch cmd --watch internal --exts go \
+  -- 'go build -o bin/sidecar ./cmd/sidecar \
+      && go build -o $HOME/.local/bin/sidecar ./cmd/sidecar \
+      && exec bin/sidecar watch --follow'
+"""
