@@ -30,22 +30,21 @@ func (m Model) View() string {
 	// makes every bar wrap onto a second line.
 	inner := m.width - panelChrome
 
-	var b strings.Builder
-	b.WriteString(m.header(inner))
-	b.WriteString("\n")
-	b.WriteString(m.tabs(inner))
-	b.WriteString("\n")
+	header := m.header(inner)
+	tabs := m.tabs(inner)
+	footer := m.footer(inner)
 
-	body := m.body(inner)
-	b.WriteString(panel.Width(panelWidth(inner)).Render(body))
-	b.WriteString("\n")
-	b.WriteString(m.footer(inner))
+	// Measure the chrome rather than assuming it. The header grows a row when
+	// hooks are failing, and a hardcoded height would silently eat the last line
+	// of every tab whenever it did.
+	chrome := lipgloss.Height(header) + lipgloss.Height(tabs) + lipgloss.Height(footer) + panelBorder
+	body := panel.Width(panelWidth(inner)).Render(m.body(inner, m.height-chrome))
 
 	if m.picker {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
 			m.pickerView(), lipgloss.WithWhitespaceChars(" "))
 	}
-	return b.String()
+	return strings.Join([]string{header, tabs, body, footer}, "\n")
 }
 
 // header is always visible: which session, how full, and under what settings.
@@ -82,15 +81,18 @@ func (m Model) header(w int) string {
 	gaugeW := w - lipgloss.Width(stat) - 2
 	line2 := stat + "  " + gauge(r.Total, window, maxInt(gaugeW, 8))
 
-	line3 := dimStyle.Render(truncPath(r.CWD, w))
-
-	return panel.Width(panelWidth(w)).Render(line1 + "\n" + line2 + "\n" + line3)
+	return panel.Width(panelWidth(w)).Render(
+		strings.Join([]string{line1, line2, dimStyle.Render(truncPath(r.CWD, w))}, "\n"))
 }
 
 func (m Model) tabs(w int) string {
+	failing := m.failingHooks()
 	var parts []string
 	for i, n := range tabNames {
 		label := fmt.Sprintf("%d %s", i+1, n)
+		if Tab(i) == TabHooks && failing > 0 {
+			label += fmt.Sprintf(" ✗%d", failing)
+		}
 		if Tab(i) == m.tab {
 			parts = append(parts, chipOn.Render(label))
 		} else {
@@ -122,7 +124,7 @@ func (m Model) footer(w int) string {
 	return padLeft(live, w)
 }
 
-func (m Model) body(w int) string {
+func (m Model) body(w, h int) string {
 	if m.err != nil && m.report.Total == 0 {
 		return m.emptyView()
 	}
@@ -141,24 +143,39 @@ func (m Model) body(w int) string {
 	case TabTimeline:
 		out = m.timelineView(w)
 	}
-	return m.clip(out)
+	return m.clip(out, h)
 }
 
 // clip applies the current tab's scroll offset and trims to the space the
 // header, tabs, and footer left over.
-func (m Model) clip(s string) string {
+func (m Model) clip(s string, h int) string {
 	lines := strings.Split(s, "\n")
-	const chrome = 10 // header panel, tab row, body border, footer
-	height := maxInt(m.height-chrome, 5)
+	height := maxInt(h, 5)
 
 	off := m.scroll[m.tab]
-	if off > maxInt(len(lines)-height, 0) {
-		off = maxInt(len(lines)-height, 0)
+	if max := maxInt(len(lines)-height, 0); off > max {
+		off = max
+	}
+
+	// Being scrolled has to be visible. Without this the view is indistinguishable
+	// from a short tab, and content above the fold — which is where anything
+	// urgent is put — silently does not exist. A persisted scroll offset made
+	// that permanent across restarts.
+	var head, tail string
+	if off > 0 {
+		head = warnStyle.Render(fmt.Sprintf("  ↑ %d lines above — g for top", off))
+		height--
 	}
 	lines = lines[off:]
 	if len(lines) > height {
 		lines = lines[:height]
-		lines = append(lines, dimStyle.Render("  ↓ more — j to scroll"))
+		tail = dimStyle.Render("  ↓ more — j to scroll")
+	}
+	if head != "" {
+		lines = append([]string{head}, lines...)
+	}
+	if tail != "" {
+		lines = append(lines, tail)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -287,4 +304,14 @@ func nonEmpty(ss ...string) []string {
 		}
 	}
 	return out
+}
+
+// failingHooks counts distinct failing hooks, not firings: one permanently
+// broken hook fires every turn, and reporting "47 hooks failing" for a single
+// misconfiguration would train the reader to ignore the badge.
+//
+// The count is all that leaves the hooks tab. The detail stays there, where it
+// is looked for, rather than spending a header row on every other tab.
+func (m Model) failingHooks() int {
+	return len(groupFailures(m.hooks))
 }

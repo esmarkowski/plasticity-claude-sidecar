@@ -90,10 +90,14 @@ func New(follow bool, sessionID string, restored State) Model {
 }
 
 // SaveState returns what should be written before exit.
+//
+// Only the active tab's offset is kept. Persisting every tab's position meant a
+// deep offset from one long tab outlived the content that justified it, and
+// restored you below whatever the tab was trying to tell you.
 func (m Model) SaveState() State {
 	scroll := map[int]int{}
-	for k, v := range m.scroll {
-		scroll[int(k)] = v
+	if off := m.scroll[m.tab]; off > 0 {
+		scroll[int(m.tab)] = off
 	}
 	return State{Tab: int(m.tab), Scroll: scroll, Session: m.current.ID, Pinned: m.pinned}
 }
