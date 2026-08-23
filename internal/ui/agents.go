@@ -29,6 +29,9 @@ type Agent struct {
 	// was found for it", which look identical if both render as zero.
 	Analyzed bool
 	Requests int
+	// Task is the human-readable description the parent gave when spawning it,
+	// falling back to the opening line of the prompt it received.
+	Task string
 	// LastWrite is when the agent's transcript was last written, used only for
 	// ordering. It is not a start time and must not be shown as one.
 	LastWrite time.Time
@@ -38,8 +41,8 @@ type Agent struct {
 // Label names the agent for display.
 //
 // SubagentStop does not in practice carry agent_type, whatever the hook
-// reference says, so this falls back to the id rather than rendering a blank row
-// that reads as a rendering fault.
+// reference says, so the type is read off the subagent's own transcript
+// instead. The id is only a last resort, for an agent that left no transcript.
 func (a Agent) Label() string {
 	if a.Type != "" {
 		return a.Type
@@ -87,7 +90,11 @@ func (a Agent) recency() time.Time {
 // Either source alone is insufficient: the events know the agent's type and
 // whether it is still running, and the transcript knows what its context
 // actually holds.
-func loadAgents(s session.Session, events []event.Event) []Agent {
+func loadAgents(s session.Session, events []event.Event, parent []transcript.Line) []Agent {
+	// What the parent asked for, keyed by the prompt it passed. This is the only
+	// source of a task description written for a person rather than for a model.
+	spawns := transcript.Spawns(parent)
+
 	byID := map[string]*Agent{}
 
 	for _, ev := range events {
@@ -131,6 +138,19 @@ func loadAgents(s session.Session, events []event.Event) []Agent {
 		a.Report = attrib.Analyze(lines, events)
 		a.Analyzed = true
 		a.Requests = a.Report.Turns
+		if t := transcript.AgentType(lines); t != "" {
+			a.Type = t
+		}
+		prompt := transcript.FirstPrompt(lines)
+		if sp, ok := spawns[transcript.PromptKey(prompt)]; ok {
+			a.Task = sp.Description
+			if a.Type == "" {
+				a.Type = sp.Type
+			}
+		}
+		if a.Task == "" {
+			a.Task = firstLine(prompt)
+		}
 		if a.LastWrite.IsZero() {
 			if fi, err := os.Stat(p); err == nil {
 				a.LastWrite = fi.ModTime()
@@ -151,4 +171,14 @@ func loadAgents(s session.Session, events []event.Event) []Agent {
 		return out[i].recency().After(out[j].recency())
 	})
 	return out
+}
+
+// firstLine is a fallback task label: the opening sentence of the prompt an
+// agent was given, when the parent recorded no description.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, ".\n"); i > 0 {
+		s = s[:i]
+	}
+	return strings.Join(strings.Fields(s), " ")
 }

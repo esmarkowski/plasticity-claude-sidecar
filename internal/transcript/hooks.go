@@ -1,6 +1,10 @@
 package transcript
 
-import "time"
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
 
 // HookRun is one hook invocation as the transcript recorded it.
 //
@@ -80,4 +84,109 @@ func hookFromAttachment(l Line) HookRun {
 func str(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+// Spawn is a subagent launch as recorded in the parent's transcript.
+//
+// The parent is the only place a subagent's human-readable task appears: the
+// Agent tool call carries the type and a description written for a person. The
+// subagent's own transcript knows its type but only ever sees the prompt.
+type Spawn struct {
+	Type        string
+	Description string
+	Prompt      string
+}
+
+// Spawns extracts subagent launches, keyed by the prompt each one was given.
+//
+// Keyed by prompt because there is no shared identifier: the parent records a
+// tool_use id, the subagent transcript records an agentId, and nothing joins
+// them. The prompt is passed through verbatim as the subagent's first message,
+// which makes it the one thing both sides hold.
+func Spawns(lines []Line) map[string]Spawn {
+	out := map[string]Spawn{}
+	for _, l := range lines {
+		if l.Message == nil {
+			continue
+		}
+		for _, b := range l.Message.Blocks() {
+			if b.Type != "tool_use" || (b.Name != "Agent" && b.Name != "Task") {
+				continue
+			}
+			var in struct {
+				SubagentType string `json:"subagent_type"`
+				Description  string `json:"description"`
+				Prompt       string `json:"prompt"`
+			}
+			if err := json.Unmarshal(b.Input, &in); err != nil || in.Prompt == "" {
+				continue
+			}
+			out[PromptKey(in.Prompt)] = Spawn{
+				Type:        in.SubagentType,
+				Description: in.Description,
+				Prompt:      in.Prompt,
+			}
+		}
+	}
+	return out
+}
+
+// PromptKey normalizes a prompt into a join key. A prefix, because the harness
+// may append to the prompt it hands the subagent.
+func PromptKey(prompt string) string {
+	const n = 160
+	k := strings.Join(strings.Fields(prompt), " ")
+	if len(k) > n {
+		k = k[:n]
+	}
+	return k
+}
+
+// FirstPrompt is the task a subagent was given: the first user message of its
+// own transcript.
+func FirstPrompt(lines []Line) string {
+	for _, l := range lines {
+		if l.Message == nil || l.Message.Role != "user" {
+			continue
+		}
+		for _, b := range l.Message.Blocks() {
+			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+				return b.Text
+			}
+		}
+	}
+	return ""
+}
+
+// AgentType reads the agent type off a subagent's own transcript.
+func AgentType(lines []Line) string {
+	for _, l := range lines {
+		if l.AttributionAgent != "" {
+			return l.AttributionAgent
+		}
+	}
+	return ""
+}
+
+// Title is a human-readable name for a session.
+//
+// Sessions are not anonymous, though a uuid is all they look like from the
+// filesystem: a name given on launch is recorded as agentName, and the harness
+// generates a summary title of its own. Either beats eight hex characters.
+// The last one wins, since both can be revised mid-session.
+func Title(lines []Line) string {
+	named, generated := "", ""
+	for _, l := range lines {
+		if l.AgentName != "" {
+			named = l.AgentName
+		}
+		if l.AITitle != "" {
+			generated = l.AITitle
+		}
+	}
+	// A name the user chose outranks one the harness inferred.
+	if named != "" {
+		return named
+	}
+	return generated
 }

@@ -156,6 +156,10 @@ func AnalyzeWith(lines []transcript.Line, events []event.Event, snap harness.Sna
 		Usage: usage,
 		Total: usage.ContextTokens(),
 		Turns: len(transcript.Requests(chain)),
+		// Titles are recorded on their own lines, outside the message chain, so
+		// they come from the whole file rather than from what is still in
+		// context.
+		Title: transcript.Title(lines),
 	}
 
 	tally := map[Bucket]int{}

@@ -57,22 +57,27 @@ func (m Model) toolsView(w int) string {
 	return b.String()
 }
 
-// agentsView shows each subagent on one row: its own window occupancy, broken
-// down in the same colours as everything else. A subagent has its own context
-// and can fill it independently, which is the thing worth seeing at a glance.
+// agentsView shows each subagent on one row: what it is, what it was asked to
+// do, and how full its own window got. A subagent has its own context and can
+// fill it independently, which is the thing worth seeing at a glance.
 func (m Model) agentsView(w int) string {
 	if len(m.agents) == 0 {
 		return dimStyle.Render("no subagents in this session")
 	}
 	const (
-		typeW    = 24
+		typeW    = 18
 		stateW   = 9
 		ctxW     = 10
-		reqW     = 6
-		elapsedW = 9
+		reqW     = 5
+		elapsedW = 8
 		replyW   = 9
+		minBar   = 10
 	)
-	barW := maxInt(w-typeW-stateW-ctxW-reqW-elapsedW-replyW-1, 8)
+	// The task description is the widest useful thing here and the first to be
+	// squeezed; below that the bar goes, then the shorter columns.
+	fixed := typeW + stateW + ctxW + reqW + elapsedW + replyW + 1
+	taskW := minInt(maxInt(w-fixed-minBar, 0), 44)
+	barW := maxInt(w-fixed-taskW, 6)
 
 	// A subagent runs the same model as its parent, so it has the same window.
 	// Without one, stackedGauge treats the total as the whole window and every
@@ -84,9 +89,13 @@ func (m Model) agentsView(w int) string {
 
 	var b strings.Builder
 	missing := 0
-	b.WriteString(faintStyle.Render(
-		pad("agent", typeW)+pad("state", stateW)+padLeft("context", ctxW)+
-			padLeft("reqs", reqW)+padLeft("elapsed", elapsedW)+padLeft("returned", replyW)) + "\n")
+	header := pad("agent", typeW)
+	if taskW > 0 {
+		header += pad("task", taskW)
+	}
+	header += pad("state", stateW) + padLeft("context", ctxW) +
+		padLeft("reqs", reqW) + padLeft("elapsed", elapsedW) + padLeft("returned", replyW)
+	b.WriteString(faintStyle.Render(header) + "\n")
 
 	for _, a := range m.agents {
 		state := dimStyle.Render("done")
@@ -108,13 +117,13 @@ func (m Model) agentsView(w int) string {
 			bar = faintStyle.Render(strings.Repeat("·", barW))
 		}
 
-		b.WriteString(
-			pad(trunc(a.Label(), typeW-1), typeW) +
-				pad(state, stateW) +
-				padLeft(ctx, ctxW) +
-				padLeft(reqs, reqW) +
-				padLeft(dimStyle.Render(elapsedLabel(a)), elapsedW) +
-				padLeft(reply, replyW) + " " + bar + "\n")
+		row := pad(trunc(a.Label(), typeW-1), typeW)
+		if taskW > 0 {
+			row += pad(dimStyle.Render(trunc(a.Task, taskW-1)), taskW)
+		}
+		row += pad(state, stateW) + padLeft(ctx, ctxW) + padLeft(reqs, reqW) +
+			padLeft(dimStyle.Render(elapsedLabel(a)), elapsedW) + padLeft(reply, replyW)
+		b.WriteString(row + " " + bar + "\n")
 	}
 
 	b.WriteString("\n" + faintStyle.Render(wrap(
@@ -124,7 +133,8 @@ func (m Model) agentsView(w int) string {
 		// with an empty context — would be wrong.
 		b.WriteString("\n" + faintStyle.Render(wrap(fmt.Sprintf(
 			"%d agent%s known only from hook events: no transcript under the session's "+
-				"subagents/ directory, so their context could not be read.", missing, plural(missing)), w)))
+				"subagents/ directory, so neither its type nor its context could be read.",
+			missing, plural(missing)), w)))
 	}
 	return b.String()
 }
@@ -476,6 +486,8 @@ func (m Model) pickerView(termWidth int) string {
 	contentW := boxW - panelBorder
 	labelW, numW, barW, showTime := pickerColumns(contentW)
 
+	names := sessionNames(m.sessions, m.summary, labelW-1)
+
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Switch session") + "\n\n")
 
@@ -486,15 +498,16 @@ func (m Model) pickerView(termWidth int) string {
 			break
 		}
 
-		marker, label := "  ", dimStyle.Render(pad(trunc(s.Label(), labelW-1), labelW))
+		sum, known := m.summary[s.ID]
+
+		marker, label := "  ", dimStyle.Render(pad(names[i], labelW))
 		if i == m.pick {
 			// A plain glyph, not a chip: chipOn pads to three columns and the
 			// row is budgeted for two.
 			marker = keyStyle.Render("▸") + " "
-			label = titleStyle.Render(pad(trunc(s.Label(), labelW-1), labelW))
+			label = titleStyle.Render(pad(names[i], labelW))
 		}
 
-		sum, known := m.summary[s.ID]
 		var figure, bar string
 		switch {
 		case !known:

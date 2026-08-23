@@ -65,3 +65,80 @@ func TestHooksTreatsNonZeroExitAsFailure(t *testing.T) {
 		t.Fatalf("non-zero exit on a success attachment was not flagged: %+v", hooks)
 	}
 }
+
+// A subagent's type is on its own transcript as attributionAgent, not on the
+// SubagentStop hook payload — which is documented to carry agent_type and in
+// practice does not.
+func TestAgentTypeAndFirstPrompt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.jsonl")
+	body := `{"type":"user","uuid":"a","parentUuid":null,"isSidechain":true,"agentId":"a0b7f38e5","message":{"role":"user","content":[{"type":"text","text":"Review the working-tree diff. Be thorough."}]}}
+{"type":"assistant","uuid":"b","parentUuid":"a","isSidechain":true,"agentId":"a0b7f38e5","attributionAgent":"review-agent","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := AgentType(lines); got != "review-agent" {
+		t.Errorf("AgentType = %q, want review-agent", got)
+	}
+	if got := FirstPrompt(lines); got != "Review the working-tree diff. Be thorough." {
+		t.Errorf("FirstPrompt = %q", got)
+	}
+}
+
+// The parent's Agent tool call is the only place a task description written for
+// a person appears. Nothing joins it to the subagent but the prompt.
+func TestSpawnsJoinByPrompt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "parent.jsonl")
+	body := `{"type":"assistant","uuid":"a","parentUuid":null,"message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Agent","input":{"subagent_type":"Explore","description":"Map domain models","prompt":"Find every model and concern in app/models"}}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spawns := Spawns(lines)
+	sp, ok := spawns[PromptKey("Find every model and concern in app/models")]
+	if !ok {
+		t.Fatalf("spawn not found by prompt key; keys were %v", spawns)
+	}
+	if sp.Type != "Explore" || sp.Description != "Map domain models" {
+		t.Errorf("spawn = %+v", sp)
+	}
+
+	// Whitespace differences must not break the join, since the two sides are
+	// written by different parts of the harness.
+	if PromptKey("Find every  model\nand concern in app/models") != PromptKey("Find every model and concern in app/models") {
+		t.Error("PromptKey is sensitive to whitespace")
+	}
+}
+
+// A named session outranks a generated title, and the last value wins since
+// both can be revised mid-session.
+func TestTitlePrefersGivenName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	body := `{"type":"ai-title","aiTitle":"Some generated summary","sessionId":"s"}
+{"type":"agent-name","agentName":"archspec","sessionId":"s"}
+{"type":"ai-title","aiTitle":"A revised summary","sessionId":"s"}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lines, _ := Load(path)
+	if got := Title(lines); got != "archspec" {
+		t.Errorf("Title = %q, want the given name", got)
+	}
+
+	path2 := filepath.Join(t.TempDir(), "s2.jsonl")
+	if err := os.WriteFile(path2, []byte(`{"type":"ai-title","aiTitle":"First"}`+"\n"+`{"type":"ai-title","aiTitle":"Latest"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lines2, _ := Load(path2)
+	if got := Title(lines2); got != "Latest" {
+		t.Errorf("Title = %q, want the most recent generated title", got)
+	}
+}

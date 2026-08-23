@@ -94,10 +94,16 @@ type Line struct {
 	Mode        string          `json:"mode"`
 	PermMode    string          `json:"permissionMode"`
 	AITitle     string          `json:"aiTitle"`
+	AgentName   string          `json:"agentName"`
 	Message     *Message        `json:"message"`
 	Attachment  map[string]any  `json:"attachment"`
 	Compact     *CompactMeta    `json:"compactMetadata"`
 	Effort      json.RawMessage `json:"effort"`
+	// Subagent identity, present on the lines of a subagent's own transcript.
+	// AttributionAgent is the agent type — the thing SubagentStop is documented
+	// to report and does not.
+	AgentID          string `json:"agentId"`
+	AttributionAgent string `json:"attributionAgent"`
 	// Hook bookkeeping, present on stop_hook_summary lines. This is the only
 	// place the actual command path of a hook appears; the attachments carry a
 	// human-facing description instead.

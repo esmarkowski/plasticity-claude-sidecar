@@ -17,6 +17,7 @@ type summary struct {
 	Total  int
 	Window int
 	Model  string
+	Title  string
 	Slices []attrib.Slice
 }
 
@@ -82,7 +83,7 @@ func summaryFor(s session.Session, events []event.Event) (summary, bool) {
 	snap, _ := harness.Get(s.CWD, false, 0)
 	rep := attrib.AnalyzeWith(lines, events, snap)
 
-	sum := summary{Total: rep.Total, Window: rep.Window, Model: rep.Model, Slices: rep.Slices}
+	sum := summary{Total: rep.Total, Window: rep.Window, Model: rep.Model, Title: rep.Title, Slices: rep.Slices}
 	summaryCache.Lock()
 	summaryCache.entries[s.Transcript] = cachedSummary{
 		size: fi.Size(), modUnix: fi.ModTime().UnixNano(), summary: sum,
@@ -114,4 +115,45 @@ func withContent(sessions []session.Session, summaries map[string]summary) []ses
 		return sessions
 	}
 	return out
+}
+
+// sessionName prefers the session's own title over its directory and uuid.
+//
+// A session is not anonymous — it has a name if one was given at launch, and a
+// generated one otherwise — but nothing about the filesystem layout suggests
+// that, so the picker used to identify sessions by eight hex characters.
+func sessionName(s session.Session, sum summary) string {
+	if sum.Title != "" {
+		return sum.Title
+	}
+	return s.Label()
+}
+
+// sessionNames labels a list of sessions, disambiguating any that share a name.
+//
+// Collisions are ordinary rather than rare: resuming work in the same directory
+// on the same task tends to produce the same generated title, and two rows
+// reading "debug-context-window-visibility" identify nothing.
+// The width matters: the disambiguating suffix has to survive truncation, so
+// the name is shortened to make room for it rather than appended and then cut.
+func sessionNames(sessions []session.Session, summaries map[string]summary, width int) []string {
+	names := make([]string, len(sessions))
+	seen := map[string]int{}
+	for i, s := range sessions {
+		names[i] = sessionName(s, summaries[s.ID])
+		seen[names[i]]++
+	}
+	for i, s := range sessions {
+		if seen[names[i]] < 2 {
+			names[i] = trunc(names[i], width)
+			continue
+		}
+		id := s.ID
+		if len(id) > 8 {
+			id = id[:8]
+		}
+		suffix := " · " + id
+		names[i] = trunc(names[i], maxInt(width-len(suffix), 4)) + suffix
+	}
+	return names
 }

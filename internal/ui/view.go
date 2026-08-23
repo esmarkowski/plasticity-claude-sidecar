@@ -56,6 +56,9 @@ func (m Model) header(w int) string {
 	r := m.report
 
 	name := m.current.Label()
+	if r.Title != "" {
+		name = r.Title
+	}
 	if m.pinned {
 		name += " " + warnStyle.Render("pinned")
 	}

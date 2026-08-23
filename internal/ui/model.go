@@ -186,7 +186,7 @@ func analyze(want string, follow bool) loadedMsg {
 			report:   rep,
 			audit:    attrib.Audit(lines, evs, snap),
 			snapshot: snap,
-			agents:   loadAgents(cur, evs),
+			agents:   loadAgents(cur, evs, lines),
 			// Hook failures come from the transcript rather than our own log:
 			// a hook that fails to start never writes anything, so only Claude
 			// Code's own record of it exists.
