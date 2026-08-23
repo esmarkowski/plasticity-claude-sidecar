@@ -375,3 +375,93 @@ func TestBreakdownsOnAgentAndTimelineRows(t *testing.T) {
 		t.Error("the breakdown did not render once opened")
 	}
 }
+
+// Clicking a row selects it, wherever that row happens to have been drawn — the
+// timeline's rows are a plain list, the hooks tab's are in a column beside
+// another one, and a row with its breakdown open is several lines.
+func TestClickSelectsTheRowUnderThePointer(t *testing.T) {
+	m := New(false, "", State{})
+	var model tea.Model = m
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
+
+	points := make([]attrib.AuditPoint, 60)
+	for i := range points {
+		points[i] = attrib.AuditPoint{Request: i + 1, Context: 1000 * (i + 1),
+			Detail: []attrib.Item{{Name: "Bash git", Tokens: 900}}}
+	}
+	model, _ = model.Update(loadedMsg{report: toolsModel().report, audit: points,
+		current: session.Session{ID: "s"}})
+	model, _ = model.Update(keyOf("6"))
+	m = model.(Model)
+
+	// Every row, clicked where it was drawn, selects itself. The probe's account
+	// of where the rows are has to agree with where the real cursor lands.
+	lines := m.rowLines()
+	if len(lines) != len(points) {
+		t.Fatalf("the probe found %d rows, want %d", len(lines), len(points))
+	}
+	for i := range points {
+		if at := m.markerLine(i); at != lines[i] {
+			t.Fatalf("row %d draws its marker on line %d, probe says %d", i, at, lines[i])
+		}
+		if got, ok := m.rowAt(lines[i]); !ok || got != i {
+			t.Fatalf("the click on row %d's own line resolved to %d (ok=%v)", i, got, ok)
+		}
+	}
+
+	// A click on the header above the first row selects nothing rather than
+	// guessing at the nearest.
+	if _, ok := m.rowAt(0); ok && m.markerLine(0) > 0 {
+		t.Error("a click on the table header selected a row")
+	}
+
+	// Through Update, with the screen coordinates a terminal would send.
+	y := m.bodyTop + m.markerLine(4) - m.vp.YOffset
+	clicked, _ := m.Update(tea.MouseMsg{X: 20, Y: y,
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if got := clicked.(Model).cursor[TabTimeline]; got != 4 {
+		t.Errorf("clicking row 4 left the cursor on %d", got)
+	}
+}
+
+// A line inside an open breakdown belongs to the row it is under, not to the one
+// after it.
+func TestClickInsideABreakdownSelectsItsRow(t *testing.T) {
+	m := toolsModel()
+	m.width, m.height = 110, 40
+	m.expanded = map[rowRef]bool{{string(attrib.BucketToolResults), "Bash"}: true}
+	m.refresh()
+
+	// Bash is row 0 and has two children, so the lines after its own belong to it.
+	at := m.markerLine(0)
+	for _, line := range []int{at, at + 1, at + 2} {
+		got, ok := m.rowAt(line)
+		if !ok || got != 0 {
+			t.Errorf("line %d resolved to row %d (ok=%v), want Bash", line, got, ok)
+		}
+	}
+	if got, ok := m.rowAt(m.markerLine(1)); !ok || got != 1 {
+		t.Errorf("the row after the breakdown resolved to %d", got)
+	}
+}
+
+// The fold marker is drawn as an affordance, so clicking it should behave like
+// one.
+func TestClickingTheFoldMarkOpensTheRow(t *testing.T) {
+	m := toolsModel()
+	m.width, m.height = 110, 40
+	m.refresh()
+
+	ref := rowRef{string(attrib.BucketToolResults), "Bash"}
+	y := m.bodyTop + m.markerLine(0) - m.vp.YOffset
+	opened, _ := m.click(panelInset+gutter, y)
+	if !opened.(Model).expanded[ref] {
+		t.Error("clicking the fold marker did not open the row")
+	}
+
+	// A click on the name selects without opening.
+	selected, _ := m.click(panelInset+gutter+markerW+3, y)
+	if selected.(Model).expanded[ref] {
+		t.Error("clicking the row's name opened it")
+	}
+}

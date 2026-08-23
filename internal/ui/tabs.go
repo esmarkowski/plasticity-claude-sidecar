@@ -123,7 +123,7 @@ func (m Model) agentsView(w int) string {
 		if m.hasBreakdown(ref) {
 			mark = foldMark(m.expanded[ref]) + " "
 		}
-		row := cursorGutter(on) + mark +
+		row := m.rowGutter(on) + mark +
 			pad(selectedName(trunc(a.Label(), typeW-1), on), typeW)
 		if taskW > 0 {
 			row += pad(dimStyle.Render(trunc(a.Task, taskW-1)), taskW)
@@ -270,7 +270,7 @@ func (m Model) hookFailures(w int) string {
 		if on {
 			style = accentStyle
 		}
-		b.WriteString(cursorGutter(on) + style.Render(pad(trunc(f.Name, nameW), nameW)) +
+		b.WriteString(m.rowGutter(on) + style.Render(pad(trunc(f.Name, nameW), nameW)) +
 			dimStyle.Render(padLeft("exit "+fmt.Sprint(f.ExitCode), 9)) +
 			faintStyle.Render(fmt.Sprintf(" ×%d", f.Count)) + "\n")
 		if f.Command != "" {
@@ -310,7 +310,7 @@ func (m Model) hookResolved(resolved []failure, dismissed, w int) string {
 			if on {
 				style = accentStyle
 			}
-			b.WriteString(cursorGutter(on) +
+			b.WriteString(m.rowGutter(on) +
 				style.Render(pad(trunc(f.Name, nameW), nameW)) +
 				faintStyle.Render(padLeft("exit "+fmt.Sprint(f.ExitCode), 9)) +
 				faintStyle.Render(padLeft(fmt.Sprintf("×%d", f.Count), 5)) +
@@ -683,7 +683,7 @@ func (m Model) timelineView(w int) string {
 		if m.hasBreakdown(ref) {
 			mark = foldMark(m.expanded[ref]) + " "
 		}
-		row := cursorGutter(on) + mark + pad(selectedName(ref.Name, on), reqW)
+		row := m.rowGutter(on) + mark + pad(selectedName(ref.Name, on), reqW)
 		if causeW > 0 {
 			row += pad(dimStyle.Render(trunc(cause(p), causeW-1)), causeW)
 		}

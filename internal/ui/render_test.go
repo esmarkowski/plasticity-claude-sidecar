@@ -252,3 +252,23 @@ func TestCauseNamesTheLargestThingItCan(t *testing.T) {
 		t.Errorf("cause of a request with no detail = %q", got)
 	}
 }
+
+// The marker is anchored to the start of a line because content can contain the
+// same character: a shell command, or a path with a guillemet in it. A row that
+// merely mentions it is not the row the cursor is on.
+func TestMarkedIgnoresTheMarkerInContent(t *testing.T) {
+	if !marked(accentStyle.Render(cursorMark) + " Bash git") {
+		t.Error("a marked row was not recognised")
+	}
+	if marked("  Bash echo a › b") {
+		t.Error("a row whose content contains the marker was read as selected")
+	}
+	if marked("") || marked("  Read") {
+		t.Error("an unmarked row was read as selected")
+	}
+	// Styling in front of the marker must not hide it, and styling in front of
+	// content must not reveal one that is not there.
+	if marked(dimStyle.Render("  Read user.rb")) {
+		t.Error("a styled unmarked row was read as selected")
+	}
+}

@@ -104,6 +104,15 @@ breaks it down, a hook failure is dismissed. `tab` and `shift+tab` move between
 tabs, which is why the arrows do not: a tree needs them more than the chip row
 does. On a tab with no rows to select, `j`/`k` fall back to scrolling.
 
+The mouse works: the wheel scrolls, a click on a chip switches tabs, a click on a
+row selects it, and a click on a row's `▸` opens it. Where a row ended up on
+screen is read back off a render with every row marked, rather than from geometry
+each renderer reports for itself — a row is not one line, and the hooks tab draws
+its rows in a column beside another one, so the only account that cannot drift
+from what is on screen is the screen itself. One render per click, not one per
+candidate: a binary search over renders was correct and cost a quarter of a second
+per click on a seven-hundred-request timeline.
+
 The body is a `bubbles/viewport`, so the mouse wheel scrolls it and `pgup`/`pgdn`
 page it. The viewport follows the cursor rather than the other way round, but only
 when the cursor has just moved — following it on every refresh dragged the view

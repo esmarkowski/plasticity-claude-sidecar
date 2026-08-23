@@ -63,6 +63,10 @@ func (m *Model) refresh() {
 	// hooks are failing, and a hardcoded height would silently eat the last line
 	// of every tab whenever it did.
 	m.bar.y = lipgloss.Height(header)
+	// Where the body's first content line lands on screen: the chip row, then the
+	// panel's top border. Recorded here because this is where the geometry is
+	// known, and a click arrives with nothing but coordinates.
+	m.bodyTop = m.bar.y + 2
 	chrome := lipgloss.Height(header) + lipgloss.Height(m.bar.row) +
 		lipgloss.Height(m.footer(inner)) + panelBorder
 
@@ -273,7 +277,7 @@ func (m Model) contextView(w int) string {
 			name += " →"
 		}
 		fmt.Fprintf(&b, "%s%s %s%s%s %s\n",
-			cursorGutter(on),
+			m.rowGutter(on),
 			swatch,
 			pad(selectedName(trunc(name, nameW-1), on), nameW),
 			padLeft(numStyle.Render(comma(s.Tokens)), numW),
@@ -397,10 +401,13 @@ const cursorMark = "›"
 // list, so turning the cursor on does not shift the numbers sideways.
 const gutter = 2
 
-// cursorGutter is the selected row's marker, and the blank that keeps every
-// other row in the same columns.
-func cursorGutter(on bool) string {
-	if on {
+// rowGutter is the cursor's column for one row: its marker, or the blank that
+// keeps every other row in the same columns.
+//
+// Under a geometry probe every row gets the marker, which is what turns a single
+// render into the whole line map.
+func (m Model) rowGutter(on bool) string {
+	if on || m.probing {
 		return accentStyle.Render(cursorMark) + " "
 	}
 	return strings.Repeat(" ", gutter)
@@ -522,7 +529,7 @@ func (m Model) bucketDetail(bucket attrib.Bucket, w int, pathStyle bool) string 
 		if pathStyle {
 			label = truncPath(it.Name, room)
 		}
-		name := cursorGutter(on) + mark + selectedName(label, on)
+		name := m.rowGutter(on) + mark + selectedName(label, on)
 
 		row := pad(name, cols.name) +
 			padLeft(numStyle.Render(comma(it.Tokens)), cols.num) +
@@ -596,14 +603,86 @@ func uses(n int) string {
 	return warnStyle.Render(fmt.Sprintf("×%d", n))
 }
 
+// rowAt resolves a body line to the row that drew it, and to the last row above
+// it when the line belongs to a breakdown rather than to a row of its own.
+func (m Model) rowAt(line int) (int, bool) {
+	found := -1
+	for i, at := range m.rowLines() {
+		if at > line {
+			break
+		}
+		found = i
+	}
+	// Above the first row is the table header, which owns nothing.
+	if found < 0 {
+		return 0, false
+	}
+	return found, true
+}
+
+// rowLines is the body line each row's marker sits on, in the order they were
+// drawn.
+//
+// Taken from a render with every row marked, rather than from geometry each
+// renderer reports for itself. A row is not one line, and the tabs lay themselves
+// out differently enough that the hooks tab draws its rows in a column beside
+// another one — so the only account of where a row ended up that cannot drift
+// from what is on screen is the screen itself.
+//
+// One render, not one per candidate: a binary search over renders was correct and
+// cost a quarter of a second per click on a seven-hundred-request timeline, which
+// is more than a click can afford.
+func (m Model) rowLines() []int {
+	probe := m
+	probe.probing = true
+	var out []int
+	for i, l := range strings.Split(probe.body(m.vp.Width), "\n") {
+		if marked(l) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// markerLine is the body line row i's marker would land on.
+func (m Model) markerLine(i int) int {
+	probe := m
+	// A fresh map: this is a question about a hypothetical cursor, and answering
+	// it must not move the real one.
+	probe.cursor = map[Tab]int{m.tab: i}
+	return markedLine(strings.Split(probe.body(m.vp.Width), "\n"))
+}
+
 // markedLine is the line the cursor is on, or -1 when nothing is selected.
 func markedLine(lines []string) int {
 	for i, l := range lines {
-		if strings.Contains(l, cursorMark) {
+		if marked(l) {
 			return i
 		}
 	}
 	return -1
+}
+
+// marked reports whether a line begins with the cursor's marker.
+//
+// Anchored to the start of the line rather than searched for anywhere in it: a
+// file path or a shell command can contain the same character, and a row that
+// merely mentions it is not the row the cursor is on.
+func marked(line string) bool {
+	return strings.HasPrefix(unstyled(line), cursorMark)
+}
+
+// unstyled drops the escape sequences a line opens with, so its first visible
+// character can be read.
+func unstyled(line string) string {
+	for strings.HasPrefix(line, "\x1b[") {
+		end := strings.IndexByte(line, 'm')
+		if end < 0 {
+			return line
+		}
+		line = line[end+1:]
+	}
+	return line
 }
 
 // sharePct keeps a decimal for small shares, where rounding to a whole number

@@ -60,6 +60,11 @@ type Model struct {
 	// bar is the chip row, kept from the last layout so a click can be tested
 	// against where the chips actually were.
 	bar tabBar
+	// bodyTop is the screen row the body's first content line is drawn on.
+	bodyTop int
+	// probing makes every row draw the cursor's marker, so one render reports
+	// where all of them ended up. Never set on the Model that gets displayed.
+	probing bool
 	// offset remembers each tab's scroll position, because one viewport is shared
 	// by all of them and switching tabs would otherwise carry the offset over.
 	offset map[Tab]int
@@ -379,9 +384,10 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "pgup", "ctrl+u":
 		m.vp.HalfPageUp()
 	case "g", "home":
-		m.cursor[m.tab], m.chase = 0, true
+		m.cursor, m.chase = withCursor(m.cursor, m.tab, 0), true
 	case "G", "end":
-		m.cursor[m.tab], m.chase = maxInt(len(m.selectableRows())-1, 0), true
+		m.cursor = withCursor(m.cursor, m.tab, maxInt(len(m.selectableRows())-1, 0))
+		m.chase = true
 	case "enter", " ":
 		return m.activate()
 	case "s":
@@ -422,7 +428,8 @@ func (m Model) move(delta int) Model {
 		}
 		return m
 	}
-	m.cursor[m.tab] = minInt(maxInt(m.cursor[m.tab]+delta, 0), len(rows)-1)
+	m.cursor = withCursor(m.cursor, m.tab,
+		minInt(maxInt(m.cursor[m.tab]+delta, 0), len(rows)-1))
 	m.chase = true
 	return m
 }
@@ -481,18 +488,62 @@ func (m Model) setOpen(ref rowRef, open bool) Model {
 // row switches tabs. Anything else is left alone rather than guessed at.
 func (m Model) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	e := tea.MouseEvent(msg)
-	if e.Action == tea.MouseActionPress && e.Button == tea.MouseButtonLeft {
-		if t, ok := m.bar.hit(e.X, e.Y); ok {
-			next := m.goTo(t)
-			next.refresh()
-			return next, nil
-		}
+	if e.Action != tea.MouseActionPress || e.Button != tea.MouseButtonLeft {
+		// The viewport owns wheel handling, including how far one notch goes.
+		vp, cmd := m.vp.Update(msg)
+		m.vp = vp
+		return m, cmd
+	}
+	if t, ok := m.bar.hit(e.X, e.Y); ok {
+		next := m.goTo(t)
+		next.refresh()
+		return next, nil
+	}
+	return m.click(e.X, e.Y)
+}
+
+// click selects the row under the pointer, and opens or shuts it when the
+// pointer is on its fold marker — the marker is drawn as an affordance, so it
+// should behave like one.
+func (m Model) click(x, y int) (tea.Model, tea.Cmd) {
+	line := y - m.bodyTop + m.vp.YOffset
+	if line < 0 {
 		return m, nil
 	}
-	// The viewport owns wheel handling, including how far one notch goes.
-	vp, cmd := m.vp.Update(msg)
-	m.vp = vp
-	return m, cmd
+	i, ok := m.rowAt(line)
+	if !ok {
+		return m, nil
+	}
+	m.cursor = withCursor(m.cursor, m.tab, i)
+
+	ref, _ := m.selected()
+	if onFoldMark(x) && m.hasBreakdown(ref) {
+		m = m.setOpen(ref, !m.expanded[ref])
+	}
+	m.refresh()
+	return m, nil
+}
+
+// panelInset is the left border and padding a panel puts before its content, so
+// a screen column can be read as a body column.
+const panelInset = 2
+
+// onFoldMark reports whether a screen column falls on the fold marker, which
+// sits just past the cursor's own gutter.
+func onFoldMark(x int) bool {
+	at := x - panelInset - gutter
+	return at >= 0 && at < markerW
+}
+
+// withCursor sets a tab's cursor on a copy. Bubble Tea keeps the previous Model,
+// and a shared map would move its cursor too.
+func withCursor(cur map[Tab]int, tab Tab, i int) map[Tab]int {
+	next := map[Tab]int{}
+	for k, v := range cur {
+		next[k] = v
+	}
+	next[tab] = i
+	return next
 }
 
 // activate is what enter does to the selected row, which depends on what the row
