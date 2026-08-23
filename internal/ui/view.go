@@ -76,34 +76,49 @@ func (m Model) header(w int) string {
 	line1 := pad(left, w-lipgloss.Width(right)) + right
 
 	tokens := fmt.Sprintf("%s / %s", comma(r.Total), compact(window))
-	line2 := thresholdStyle(r.Total, window).Bold(true).Render(tokens) + "  " +
+	stat := thresholdStyle(r.Total, window).Bold(true).Render(tokens) + "  " +
 		dimStyle.Render(fmt.Sprintf("%.1f%%", pct)) + "  " +
 		dimStyle.Render(fmt.Sprintf("%d requests", r.Turns))
 
-	// The composition bar gets its own full-width row. Squeezed in beside the
-	// stats it had about forty columns for a dozen categories, which rounds the
-	// small ones out of existence.
-	line3 := stackedGauge(r.Slices, r.Total, window, w)
+	// The bar takes whatever the stats leave. Categories below roughly one
+	// column's worth round away at this width — the legend's own bars are scaled
+	// to the largest category rather than to the window, so they stay visible
+	// there.
+	line2 := stat + "  " + stackedGauge(r.Slices, r.Total, window, maxInt(w-lipgloss.Width(stat)-2, 8))
 
 	return panel.Width(panelWidth(w)).Render(
-		strings.Join([]string{line1, line2, line3, dimStyle.Render(truncPath(r.CWD, w))}, "\n"))
+		strings.Join([]string{line1, line2, dimStyle.Render(truncPath(r.CWD, w))}, "\n"))
 }
 
 func (m Model) tabs(w int) string {
 	failing := m.failingHooks()
-	var parts []string
-	for i, n := range tabNames {
-		label := fmt.Sprintf("%d %s", i+1, n)
-		if Tab(i) == TabHooks && failing > 0 {
-			label += fmt.Sprintf(" ✗%d", failing)
+
+	// Two labellings, widest first. The chip row is the one piece of chrome that
+	// cannot wrap without shifting the whole layout down a line, so it degrades
+	// to numbers rather than overflowing — the active tab keeps its name, since
+	// that is the one you need to read.
+	for _, full := range []bool{true, false} {
+		var parts []string
+		for i, name := range tabNames {
+			label := fmt.Sprint(i + 1)
+			if full || Tab(i) == m.tab {
+				label += " " + name
+			}
+			if Tab(i) == TabHooks && failing > 0 {
+				label += fmt.Sprintf(" ✗%d", failing)
+			}
+			if Tab(i) == m.tab {
+				parts = append(parts, chipOn.Render(label))
+			} else {
+				parts = append(parts, chipOff.Render(label))
+			}
 		}
-		if Tab(i) == m.tab {
-			parts = append(parts, chipOn.Render(label))
-		} else {
-			parts = append(parts, chipOff.Render(label))
+		row := lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+		if lipgloss.Width(row) <= w || !full {
+			return row
 		}
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+	return ""
 }
 
 func (m Model) footer(w int) string {
