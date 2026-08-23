@@ -113,15 +113,22 @@ list, table, and viewport, none of which is a row of tabs — and records where 
 chip landed so a click can be tested against it. Each tab keeps its own scroll
 offset, since one viewport is shared by all of them.
 
-Four kinds of row expand. A tool shows the programs behind it. A category on the
-context tab has its own tab. An agent shows its own context composition — the bar
-beside it was already that composition, drawn but unlabelled — and the full task
-where the column cut it off. A request on the timeline shows what landed in the
-window since the previous one, named after the call that caused it rather than the
-tool that made it: `Read user.rb`, not `Read`. Where the jump is larger than
-anything that can be named, the difference is a row called `unexplained`, because
-that tab exists to show the residual and a breakdown quietly explaining a third of
-a jump would hide it.
+Four kinds of row expand, and all of them start shut: a breakdown is detail asked
+for, and every row volunteering its own made the tools tab forty lines of things
+nobody had asked about. A `▸` marks a row that has something in it. Nested bars
+are faded toward the background, because the bar on the parent row is the one
+making the point and the ones under it are its parts.
+
+A tool shows the programs behind it. A category on the context tab has its own
+tab. An agent shows its own context composition — the bar beside it was already
+that composition, drawn but unlabelled — and the full task where the column cut it
+off. A request on the timeline shows what landed in the window since the previous
+one, named after the call that caused it rather than the tool that made it:
+`Read user.rb`, not `Read`. The largest of those is a column of its own, so a row
+reads as "request 107 grew 421 tokens, and it was an Edit to routes.rb" without
+expanding anything. Where the jump is larger than everything that can be named,
+the difference is a row called `unexplained`, because that tab exists to show the
+residual and a breakdown quietly explaining a third of a jump would hide it.
 
 Column widths are sized from the top-level names only, never from the nested ones.
 Sizing them to everything meant the column grew the first time a long command

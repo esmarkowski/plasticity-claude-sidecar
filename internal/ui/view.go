@@ -200,10 +200,10 @@ func (m Model) enterHint() string {
 	case ref.Kind == kindHook:
 		return "enter dismiss"
 	case m.hasBreakdown(ref):
-		if m.collapsed[ref] {
-			return "enter expand"
+		if m.expanded[ref] {
+			return "enter collapse"
 		}
-		return "enter collapse"
+		return "enter expand"
 	}
 	return ""
 }
@@ -508,7 +508,7 @@ func (m Model) bucketDetail(bucket attrib.Bucket, w int, pathStyle bool) string 
 	for _, it := range slice.Detail {
 		ref := rowRef{string(bucket), it.Name}
 		on := hasCursor && here == ref
-		open := len(it.Children) > 0 && !m.collapsed[ref]
+		open := len(it.Children) > 0 && m.expanded[ref]
 
 		// The fold marker's column is held open on every row, blank where there
 		// is nothing to fold. Drawing it only where it applies left the labels
@@ -569,6 +569,8 @@ func childDetail(it attrib.Item, largest int, cols detailCols, bucket attrib.Buc
 
 	var b strings.Builder
 	for i, kid := range it.Children {
+		// The swatch keeps its segment's exact shade, since that is what ties the
+		// row to the bar above; only the bar fades.
 		swatch := lipgloss.NewStyle().Foreground(ramp[i]).Render("▊")
 		name := strings.Repeat(" ", gutter) + "  " + swatch + " " +
 			trunc(kid.Name, maxInt(cols.name-childIndent-gutter, 4))
@@ -579,7 +581,7 @@ func childDetail(it attrib.Item, largest int, cols detailCols, bucket attrib.Buc
 		if cols.note > 0 {
 			row += pad("", cols.note)
 		}
-		b.WriteString(row + " " + lipgloss.NewStyle().Foreground(ramp[i]).
+		b.WriteString(row + " " + lipgloss.NewStyle().Foreground(fade(ramp[i], nestedFade)).
 			Render(strings.Repeat("▊", barCells(kid.Tokens, largest, cols.bar))) + "\n")
 	}
 	return b.String()

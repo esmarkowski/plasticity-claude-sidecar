@@ -121,7 +121,7 @@ func (m Model) agentsView(w int) string {
 		on := m.on(kindAgent, a.ID)
 		mark := strings.Repeat(" ", markerW)
 		if m.hasBreakdown(ref) {
-			mark = foldMark(!m.collapsed[ref]) + " "
+			mark = foldMark(m.expanded[ref]) + " "
 		}
 		row := cursorGutter(on) + mark +
 			pad(selectedName(trunc(a.Label(), typeW-1), on), typeW)
@@ -168,14 +168,15 @@ type agentCols struct{ name, num, rest, bar int }
 func agentDetail(a Agent, taskW int, cols agentCols) string {
 	var b strings.Builder
 	for _, s := range a.Report.Slices {
-		style := lipgloss.NewStyle().Foreground(colorFor(s.Bucket))
+		swatch := lipgloss.NewStyle().Foreground(colorFor(s.Bucket)).Render("▊")
+		bar := lipgloss.NewStyle().Foreground(fade(colorFor(s.Bucket), nestedFade))
 		// Shares and bars are of the agent's own total, not of the window. The bar
 		// above already answers how full this agent got; these answer what filled
 		// it, and against the window every category would round to one cell.
-		b.WriteString(nested(style.Render("▊"), string(s.Bucket), cols.name) +
+		b.WriteString(nested(swatch, string(s.Bucket), cols.name) +
 			padLeft(dimStyle.Render(comma(s.Tokens)), cols.num) +
 			padLeft(faintStyle.Render(sharePct(s.Tokens, a.Report.Total)), cols.rest) + " " +
-			style.Render(strings.Repeat("▊", barCells(s.Tokens, a.Report.Total, cols.bar))) + "\n")
+			bar.Render(strings.Repeat("▊", barCells(s.Tokens, a.Report.Total, cols.bar))) + "\n")
 	}
 	// Only when the column actually cut it off, which is where the interesting
 	// half of a prompt usually starts. Repeating a task that already fits would
@@ -643,10 +644,24 @@ func (m Model) timelineView(w int) string {
 		measuredW = 11
 		residualW = 11
 		thinkingW = 10
+		minCause  = 12
 	)
-	b.WriteString(faintStyle.Render(pad("", gutter+markerW)+pad("req", reqW)+
-		padLeft("context", ctxW)+padLeft("Δ", deltaW)+padLeft("measured", measuredW)+
-		padLeft("residual", residualW)+padLeft("thinking", thinkingW)) + "\n")
+	// The cause is the widest thing here and the first to go when the panel is
+	// narrow; the numbers are the point of the tab and keep their room.
+	fixed := gutter + markerW + reqW + ctxW + deltaW + measuredW + residualW + thinkingW
+	causeW := 0
+	if w-fixed >= minCause {
+		causeW = minInt(w-fixed, 30)
+	}
+
+	header := pad("", gutter+markerW) + pad("req", reqW)
+	if causeW > 0 {
+		header += pad("grew by", causeW)
+	}
+	header += padLeft("context", ctxW) + padLeft("Δ", deltaW) +
+		padLeft("measured", measuredW) + padLeft("residual", residualW) +
+		padLeft("thinking", thinkingW)
+	b.WriteString(faintStyle.Render(header) + "\n")
 
 	points := m.audit
 	prev := 0
@@ -666,25 +681,43 @@ func (m Model) timelineView(w int) string {
 		on := m.on(kindRequest, ref.Name)
 		mark := strings.Repeat(" ", markerW)
 		if m.hasBreakdown(ref) {
-			mark = foldMark(!m.collapsed[ref]) + " "
+			mark = foldMark(m.expanded[ref]) + " "
 		}
-		fmt.Fprintf(&b, "%s%s%s%s%s%s%s%s\n",
-			cursorGutter(on), mark,
-			pad(selectedName(ref.Name, on), reqW),
-			padLeft(numStyle.Render(comma(p.Context)), ctxW),
-			padLeft(delta, deltaW),
-			padLeft(dimStyle.Render(comma(p.Measured)), measuredW),
-			padLeft(dimStyle.Render(comma(p.Residual)), residualW),
-			padLeft(dimStyle.Render(comma(p.Thinking)), thinkingW),
-		)
+		row := cursorGutter(on) + mark + pad(selectedName(ref.Name, on), reqW)
+		if causeW > 0 {
+			row += pad(dimStyle.Render(trunc(cause(p), causeW-1)), causeW)
+		}
+		row += padLeft(numStyle.Render(comma(p.Context)), ctxW) +
+			padLeft(delta, deltaW) +
+			padLeft(dimStyle.Render(comma(p.Measured)), measuredW) +
+			padLeft(dimStyle.Render(comma(p.Residual)), residualW) +
+			padLeft(dimStyle.Render(comma(p.Thinking)), thinkingW)
+		b.WriteString(row + "\n")
 		if m.open(ref) {
-			b.WriteString(requestDetail(p, gutter+markerW+reqW+ctxW, deltaW, measuredW))
+			b.WriteString(requestDetail(p, gutter+markerW+reqW+causeW+ctxW, deltaW, measuredW))
 		}
 		prev = p.Context
 	}
 	b.WriteString("\n" + faintStyle.Render(
 		"residual is context minus everything measurable. If it climbs steadily, a category is being missed."))
 	return b.String()
+}
+
+// cause is the largest thing that can be named in a request's growth, for the
+// column that saves expanding every row to find it.
+//
+// "unexplained" is skipped even where it leads. It is the honest largest entry
+// and the residual column already reports it, but as a row label it says nothing
+// — the question the column answers is which command did this.
+func cause(p attrib.AuditPoint) string {
+	for _, it := range p.Detail {
+		switch it.Name {
+		case "unexplained", "other":
+		default:
+			return it.Name
+		}
+	}
+	return ""
 }
 
 // requestDetail names what landed in the window before this request.

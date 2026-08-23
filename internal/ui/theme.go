@@ -86,18 +86,37 @@ func shades(b attrib.Bucket, n int) []lipgloss.AdaptiveColor {
 	}
 	out := make([]lipgloss.AdaptiveColor, 0, n)
 	for i := range n {
-		// Fading stops well short of the background. Past this the tail segments
-		// of a bar are not dimmer, they are gone.
+		// The ramp stops well short of the background, and short of where it used
+		// to: a nested bar fades again on top of this, and the two compounding ran
+		// the last part of a long breakdown into the background entirely.
 		f := 0.0
 		if n > 1 {
-			f = 0.58 * float64(i) / float64(n-1)
+			f = 0.45 * float64(i) / float64(n-1)
 		}
-		out = append(out, lipgloss.AdaptiveColor{
-			Light: blend(base.Light, "#FFFFFF", f),
-			Dark:  blend(base.Dark, "#000000", f),
-		})
+		out = append(out, fade(base, f))
 	}
 	return out
+}
+
+// nestedFade is how far a nested row's bar is pushed toward the background.
+//
+// The bar on the parent row is the one making the point; the ones under it are
+// its parts, and at full strength a breakdown reads as six competing bars rather
+// than as the inside of one.
+const nestedFade = 0.4
+
+// fade mixes a colour toward the background — the terminal's version of turning
+// the opacity down. Toward white under a light theme and black under a dark one,
+// which is what makes it read as faded either way rather than as a different
+// colour under one of them.
+func fade(c lipgloss.AdaptiveColor, f float64) lipgloss.AdaptiveColor {
+	if f <= 0 {
+		return c
+	}
+	return lipgloss.AdaptiveColor{
+		Light: blend(c.Light, "#FFFFFF", f),
+		Dark:  blend(c.Dark, "#000000", f),
+	}
 }
 
 // blend mixes one hex colour toward another. Unparseable input returns the base

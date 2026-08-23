@@ -12,13 +12,13 @@ import (
 
 func toolsModel() Model {
 	m := Model{
-		tab:       TabTools,
-		width:     100,
-		height:    40,
-		offset:    map[Tab]int{},
-		cursor:    map[Tab]int{},
-		collapsed: map[rowRef]bool{},
-		vp:        newViewport(),
+		tab:      TabTools,
+		width:    100,
+		height:   40,
+		offset:   map[Tab]int{},
+		cursor:   map[Tab]int{},
+		expanded: map[rowRef]bool{},
+		vp:       newViewport(),
 		report: attrib.Report{Total: 1000, Slices: []attrib.Slice{
 			{Bucket: attrib.BucketToolResults, Tokens: 600, Detail: []attrib.Item{
 				{Name: "Bash", Tokens: 400, Count: 30, Children: []attrib.Item{
@@ -106,38 +106,41 @@ func TestSelectionSurvivesAShorterList(t *testing.T) {
 }
 
 // Enter folds the breakdown away, and the row keeps its own bar.
-func TestEnterFoldsABreakdown(t *testing.T) {
+func TestEnterOpensAndShutsABreakdown(t *testing.T) {
 	m := toolsModel()
-	if !strings.Contains(m.bucketDetail(attrib.BucketToolResults, 100, false), "git") {
-		t.Fatal("the breakdown was not open to begin with")
+
+	// Shut to begin with: a breakdown is detail asked for, and every row
+	// volunteering its own made the tab forty lines nobody had asked about.
+	shut := m.bucketDetail(attrib.BucketToolResults, 100, false)
+	if strings.Contains(shut, "git") {
+		t.Error("the breakdown was showing before anyone asked for it")
+	}
+	if !strings.Contains(shut, "▸") {
+		t.Error("a shut row does not show it has anything in it")
 	}
 
 	updated, _ := m.activate()
 	m = updated.(Model)
-	out := m.bucketDetail(attrib.BucketToolResults, 100, false)
-	if strings.Contains(out, "git") {
-		t.Error("enter did not fold the breakdown away")
-	}
-	if !strings.Contains(out, "▸") {
-		t.Error("a folded row does not show it can be unfolded")
+	if !strings.Contains(m.bucketDetail(attrib.BucketToolResults, 100, false), "git") {
+		t.Fatal("enter did not open the breakdown")
 	}
 
 	updated, _ = m.activate()
-	if !strings.Contains(updated.(Model).bucketDetail(attrib.BucketToolResults, 100, false), "git") {
-		t.Error("enter did not unfold it again")
+	if strings.Contains(updated.(Model).bucketDetail(attrib.BucketToolResults, 100, false), "git") {
+		t.Error("enter did not shut it again")
 	}
 }
 
-// Folding must not reach back into the Model it was cloned from: Bubble Tea keeps
+// Opening a row must not reach back into the Model it was cloned from: Bubble Tea keeps
 // the previous value, and a shared map would edit it too.
-func TestFoldingDoesNotMutateThePreviousModel(t *testing.T) {
+func TestOpeningDoesNotMutateThePreviousModel(t *testing.T) {
 	m := toolsModel()
 	updated, _ := m.activate()
-	if m.collapsed[rowRef{string(attrib.BucketToolResults), "Bash"}] {
-		t.Error("the fold leaked backwards into the model it came from")
+	if m.expanded[rowRef{string(attrib.BucketToolResults), "Bash"}] {
+		t.Error("the open state leaked backwards into the model it came from")
 	}
-	if !updated.(Model).collapsed[rowRef{string(attrib.BucketToolResults), "Bash"}] {
-		t.Error("the fold did not land on the new model")
+	if !updated.(Model).expanded[rowRef{string(attrib.BucketToolResults), "Bash"}] {
+		t.Error("the open state did not land on the new model")
 	}
 }
 
@@ -205,15 +208,15 @@ func TestArrowsOpenAndShutARow(t *testing.T) {
 	m := toolsModel()
 	ref := rowRef{string(attrib.BucketToolResults), "Bash"}
 
+	opened, _ := m.expand()
+	m = opened.(Model)
+	if !m.expanded[ref] {
+		t.Fatal("right did not open the row")
+	}
 	shut, _ := m.collapse()
 	m = shut.(Model)
-	if !m.collapsed[ref] {
-		t.Fatal("left did not shut the row")
-	}
-	open, _ := m.expand()
-	m = open.(Model)
-	if m.collapsed[ref] {
-		t.Error("right did not reopen the row")
+	if m.expanded[ref] {
+		t.Error("left did not shut the row again")
 	}
 
 	// Left on a row with nothing to shut changes nothing at all.
@@ -347,20 +350,28 @@ func TestBreakdownsOnAgentAndTimelineRows(t *testing.T) {
 		t.Error("an unknown agent claimed a breakdown")
 	}
 
-	// And the rows render them.
+	// Shut to begin with, and rendered once asked for.
 	m.tab = TabAgents
-	if out := m.agentsView(100); !strings.Contains(out, "tool results") {
-		t.Error("the agent's composition did not render")
+	if strings.Contains(m.agentsView(100), "tool results") {
+		t.Error("the agent's composition was showing before anyone asked")
 	}
+	m.expanded = map[rowRef]bool{{kindAgent, "a1"}: true}
+	if !strings.Contains(m.agentsView(100), "tool results") {
+		t.Error("the agent's composition did not render once opened")
+	}
+
 	m.tab = TabTimeline
-	out := m.timelineView(100)
-	if !strings.Contains(out, "Read user.rb") {
-		t.Error("what grew the window did not render")
+	shut := m.timelineView(100)
+	// The cause is a column, so it reads without expanding anything; the rest of
+	// the breakdown is what expanding is for.
+	if !strings.Contains(shut, "Read user.rb") {
+		t.Error("the cause column did not name what grew the window")
 	}
-	// Folded away, it is gone but the row is not.
-	m.collapsed = map[rowRef]bool{{kindRequest, "2"}: true}
-	folded := m.timelineView(100)
-	if strings.Contains(folded, "Read user.rb") || !strings.Contains(folded, "900") {
-		t.Error("folding a request row hid the wrong thing")
+	if strings.Contains(shut, "700") {
+		t.Error("a shut request row showed its breakdown anyway")
+	}
+	m.expanded = map[rowRef]bool{{kindRequest, "2"}: true}
+	if !strings.Contains(m.timelineView(100), "700") {
+		t.Error("the breakdown did not render once opened")
 	}
 }

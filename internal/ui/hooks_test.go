@@ -121,7 +121,7 @@ func TestDismissHidesTheFailureAndTheBadge(t *testing.T) {
 // Restoring is the way back from dismissing something that was not actually
 // fixed, so it has to bring the badge back too.
 func TestRestoreBringsDismissedFailuresBack(t *testing.T) {
-	m := Model{tab: TabHooks, offset: map[Tab]int{}, cursor: map[Tab]int{}, collapsed: map[rowRef]bool{}, vp: newViewport(),
+	m := Model{tab: TabHooks, offset: map[Tab]int{}, cursor: map[Tab]int{}, expanded: map[rowRef]bool{}, vp: newViewport(),
 		hooks: []transcript.HookRun{run("Stop", 1, 10)}}
 
 	dismissed, _ := m.key(keyOf("x"))
@@ -140,7 +140,7 @@ func TestRestoreBringsDismissedFailuresBack(t *testing.T) {
 // Dismissing is scoped to the tab that shows the failures; x elsewhere is a
 // keystroke that would silently clear a badge the user was not looking at.
 func TestDismissOnlyAppliesOnTheHooksTab(t *testing.T) {
-	m := Model{tab: TabContext, offset: map[Tab]int{}, cursor: map[Tab]int{}, collapsed: map[rowRef]bool{}, vp: newViewport(),
+	m := Model{tab: TabContext, offset: map[Tab]int{}, cursor: map[Tab]int{}, expanded: map[rowRef]bool{}, vp: newViewport(),
 		hooks: []transcript.HookRun{run("Stop", 1, 10)}}
 	updated, _ := m.key(keyOf("x"))
 	if updated.(Model).failingHooks() != 1 {
@@ -150,7 +150,7 @@ func TestDismissOnlyAppliesOnTheHooksTab(t *testing.T) {
 
 // A dismissal has to survive the rebuild that follows fixing the hook.
 func TestDismissalsRoundTripThroughState(t *testing.T) {
-	m := Model{tab: TabHooks, offset: map[Tab]int{}, cursor: map[Tab]int{}, collapsed: map[rowRef]bool{}, vp: newViewport(),
+	m := Model{tab: TabHooks, offset: map[Tab]int{}, cursor: map[Tab]int{}, expanded: map[rowRef]bool{}, vp: newViewport(),
 		hooks: []transcript.HookRun{run("Stop", 1, 10)}}
 	m.dismissed = m.dismissAll()
 

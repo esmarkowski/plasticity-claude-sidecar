@@ -153,7 +153,8 @@ func TestBucketDetailKeepsColumnsAligned(t *testing.T) {
 			{Name: "Read", Tokens: 200, Count: 4},
 		},
 	}}}
-	m := Model{report: r, cursor: map[Tab]int{}, collapsed: map[rowRef]bool{}, tab: TabTools}
+	m := Model{report: r, cursor: map[Tab]int{}, tab: TabTools,
+		expanded: map[rowRef]bool{{string(attrib.BucketToolCalls), "Bash"}: true}}
 	out := m.bucketDetail(attrib.BucketToolCalls, 100, false)
 
 	// Where the bar starts is where every column before it ended, so one shared
@@ -191,4 +192,63 @@ func barStart(plain string) int {
 		i--
 	}
 	return i + 1
+}
+
+// The bar on the parent row is the one making the point; the ones under it are
+// its parts, and at full strength a breakdown reads as six competing bars.
+func TestNestedBarsAreFainterThanTheirSwatch(t *testing.T) {
+	swatch := shades(attrib.BucketToolResults, 4)[0]
+	bar := fade(swatch, nestedFade)
+	if bar == swatch {
+		t.Fatal("the nested bar is the same colour as the row's swatch")
+	}
+
+	// Toward white under a light theme and black under a dark one, which is what
+	// makes it read as faded either way rather than as some other colour.
+	base, _ := parseHex(swatch.Light)
+	faded, _ := parseHex(bar.Light)
+	for i := range base {
+		if faded[i] < base[i] {
+			t.Errorf("light channel %d moved away from the background: %v to %v", i, base, faded)
+		}
+	}
+	base, _ = parseHex(swatch.Dark)
+	faded, _ = parseHex(bar.Dark)
+	for i := range base {
+		if faded[i] > base[i] {
+			t.Errorf("dark channel %d moved away from the background: %v to %v", i, base, faded)
+		}
+	}
+
+	// Not so far that it is gone: the last part of a long breakdown fades twice,
+	// once down the ramp and once for being nested.
+	last := fade(shades(attrib.BucketToolResults, 6)[5], nestedFade)
+	if last == fade(colorFor(attrib.BucketToolResults), 1) {
+		t.Error("the last nested bar faded into the background")
+	}
+}
+
+// The timeline's column exists so the cause of a jump can be read without
+// expanding every row to find it.
+func TestCauseNamesTheLargestThingItCan(t *testing.T) {
+	p := attrib.AuditPoint{Detail: []attrib.Item{
+		{Name: "unexplained", Tokens: 900},
+		{Name: "Read user.rb", Tokens: 400},
+		{Name: "thinking", Tokens: 100},
+	}}
+	if got := cause(p); got != "Read user.rb" {
+		t.Errorf("cause = %q, want the command rather than the remainder", got)
+	}
+
+	// Nothing nameable is nothing said, not "other".
+	only := attrib.AuditPoint{Detail: []attrib.Item{
+		{Name: "unexplained", Tokens: 900},
+		{Name: "other", Tokens: 40},
+	}}
+	if got := cause(only); got != "" {
+		t.Errorf("cause = %q, want nothing", got)
+	}
+	if got := cause(attrib.AuditPoint{}); got != "" {
+		t.Errorf("cause of a request with no detail = %q", got)
+	}
 }

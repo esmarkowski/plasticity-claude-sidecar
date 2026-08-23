@@ -73,8 +73,12 @@ type Model struct {
 	// j/k means the same thing throughout and only falls back to scrolling on a
 	// tab with nothing to select.
 	cursor map[Tab]int
-	// collapsed folds away a row's breakdown, keyed by the row it belongs to.
-	collapsed map[rowRef]bool
+	// expanded holds the rows whose breakdown is showing, keyed by the row.
+	//
+	// Tracking what is open rather than what is shut is what makes shut the
+	// default: a breakdown is detail asked for, and every row volunteering its
+	// own made the tools tab forty lines of things nobody had asked about.
+	expanded map[rowRef]bool
 
 	// dismissed watermarks hook failures the user has acknowledged: key to the
 	// failure's most recent firing at the time it was dismissed. Anything newer
@@ -101,10 +105,10 @@ type State struct {
 	// Dismissed has to outlive the process: a hook failure dismissed before a
 	// rebuild that came back after it would make the dismissal useless.
 	Dismissed map[string]time.Time `json:"dismissed,omitempty"`
-	// Cursor and Collapsed are the same bet the scroll offset makes: a rebuild
-	// should put you back on the row you were reading.
-	Cursor    int         `json:"cursor,omitempty"`
-	Collapsed [][2]string `json:"collapsed,omitempty"`
+	// Cursor and Expanded are the same bet the scroll offset makes: a rebuild
+	// should put you back on the row you were reading, opened as you left it.
+	Cursor   int         `json:"cursor,omitempty"`
+	Expanded [][2]string `json:"expanded,omitempty"`
 }
 
 // New builds the dashboard.
@@ -113,13 +117,13 @@ func New(follow bool, sessionID string, restored State) Model {
 		tab:       Tab(restored.Tab),
 		offset:    map[Tab]int{},
 		cursor:    map[Tab]int{Tab(restored.Tab): restored.Cursor},
-		collapsed: map[rowRef]bool{},
+		expanded:  map[rowRef]bool{},
 		follow:    follow,
 		pinned:    restored.Pinned,
 		dismissed: restored.Dismissed,
 	}
-	for _, r := range restored.Collapsed {
-		m.collapsed[rowRef{r[0], r[1]}] = true
+	for _, r := range restored.Expanded {
+		m.expanded[rowRef{r[0], r[1]}] = true
 	}
 	for k, v := range restored.Scroll {
 		m.offset[Tab(k)] = v
@@ -145,21 +149,21 @@ func (m Model) SaveState() State {
 	if off := m.vp.YOffset; off > 0 {
 		scroll[int(m.tab)] = off
 	}
-	var collapsed [][2]string
-	for ref, on := range m.collapsed {
+	var expanded [][2]string
+	for ref, on := range m.expanded {
 		if on {
-			collapsed = append(collapsed, [2]string{ref.Kind, ref.Name})
+			expanded = append(expanded, [2]string{ref.Kind, ref.Name})
 		}
 	}
 	// Sorted so a saved state file does not churn on every exit.
-	sort.Slice(collapsed, func(i, j int) bool {
-		if collapsed[i][0] != collapsed[j][0] {
-			return collapsed[i][0] < collapsed[j][0]
+	sort.Slice(expanded, func(i, j int) bool {
+		if expanded[i][0] != expanded[j][0] {
+			return expanded[i][0] < expanded[j][0]
 		}
-		return collapsed[i][1] < collapsed[j][1]
+		return expanded[i][1] < expanded[j][1]
 	})
 	return State{Tab: int(m.tab), Scroll: scroll, Session: m.current.ID, Pinned: m.pinned,
-		Dismissed: m.dismissed, Cursor: m.cursor[m.tab], Collapsed: collapsed}
+		Dismissed: m.dismissed, Cursor: m.cursor[m.tab], Expanded: expanded}
 }
 
 // newViewport is the body's scroller.
@@ -442,8 +446,8 @@ func (m Model) goTo(t Tab) Model {
 // nothing to open — right on a category is still "show me this".
 func (m Model) expand() (tea.Model, tea.Cmd) {
 	ref, ok := m.selected()
-	if ok && m.hasBreakdown(ref) && m.collapsed[ref] {
-		return m.fold(ref, false), nil
+	if ok && m.hasBreakdown(ref) && !m.expanded[ref] {
+		return m.setOpen(ref, true), nil
 	}
 	if ok && m.hasBreakdown(ref) {
 		return m, nil
@@ -455,21 +459,21 @@ func (m Model) expand() (tea.Model, tea.Cmd) {
 // breakdown: left is not a way out of the tab.
 func (m Model) collapse() (tea.Model, tea.Cmd) {
 	ref, ok := m.selected()
-	if !ok || !m.hasBreakdown(ref) || m.collapsed[ref] {
+	if !ok || !m.hasBreakdown(ref) || !m.expanded[ref] {
 		return m, nil
 	}
-	return m.fold(ref, true), nil
+	return m.setOpen(ref, false), nil
 }
 
-// fold sets a row's folded state on a copy of the map. Bubble Tea keeps the
+// setOpen sets a row's open state on a copy of the map. Bubble Tea keeps the
 // previous Model, and a shared map would edit that one too.
-func (m Model) fold(ref rowRef, shut bool) Model {
-	folded := map[rowRef]bool{}
-	for k, v := range m.collapsed {
-		folded[k] = v
+func (m Model) setOpen(ref rowRef, open bool) Model {
+	next := map[rowRef]bool{}
+	for k, v := range m.expanded {
+		next[k] = v
 	}
-	folded[ref] = shut
-	m.collapsed = folded
+	next[ref] = open
+	m.expanded = next
 	return m
 }
 
@@ -507,7 +511,7 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 	case ref.Kind == kindHook:
 		m.dismissed = m.dismissOne(ref.Name)
 	case m.hasBreakdown(ref):
-		m = m.fold(ref, !m.collapsed[ref])
+		m = m.setOpen(ref, !m.expanded[ref])
 	}
 	return m, nil
 }
@@ -554,9 +558,9 @@ func (m Model) hasBreakdown(ref rowRef) bool {
 }
 
 // open reports whether a row's breakdown should be drawn: it has one, and it has
-// not been folded away.
+// been asked for.
 func (m Model) open(ref rowRef) bool {
-	return m.hasBreakdown(ref) && !m.collapsed[ref]
+	return m.hasBreakdown(ref) && m.expanded[ref]
 }
 
 // dismissAll marks every failure the hooks tab is currently showing as seen.
