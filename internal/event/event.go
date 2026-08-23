@@ -42,6 +42,13 @@ type Event struct {
 	Detail     map[string]any    `json:"detail,omitempty"`
 }
 
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
 // Dir is where every sidecar file lives. Under ~/.claude so it sits beside the
 // transcripts it describes and gets swept up by the same backup habits.
 func Dir() string {
@@ -133,6 +140,10 @@ func (e Event) label() string {
 		if s, ok := e.Detail[k].(string); ok && s != "" {
 			return s
 		}
+	}
+	// A batch has no single target; its size is the informative part.
+	if calls, ok := e.Detail["tool_calls"].([]any); ok {
+		return fmt.Sprintf("%d call%s", len(calls), plural(len(calls)))
 	}
 	return ""
 }

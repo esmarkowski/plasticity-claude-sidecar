@@ -174,3 +174,28 @@ func max(a, b int) int {
 	}
 	return b
 }
+
+// wrap folds text to a width on word boundaries. Explanatory notes read badly
+// truncated, and in a column they no longer fit on one line.
+func wrap(s string, width int) string {
+	if width < 8 {
+		return s
+	}
+	var out []string
+	line := ""
+	for _, word := range strings.Fields(s) {
+		switch {
+		case line == "":
+			line = word
+		case lipgloss.Width(line)+1+lipgloss.Width(word) <= width:
+			line += " " + word
+		default:
+			out = append(out, line)
+			line = word
+		}
+	}
+	if line != "" {
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
