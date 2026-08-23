@@ -267,7 +267,12 @@ func (m Model) contextView(w int) string {
 	return b.String()
 }
 
-// bucketDetail renders the drill-down rows behind one bucket.
+// bucketDetail renders the drill-down rows behind one bucket: what, how much,
+// and what share of the category.
+//
+// Bars are scaled to the largest row rather than to the window, which is what
+// the share column is for. Scaled to the window every row here would be a
+// sliver, since a single category is a fraction of the context to begin with.
 func bucketDetail(r attrib.Report, bucket attrib.Bucket, w int, pathStyle bool) string {
 	var slice *attrib.Slice
 	for i := range r.Slices {
@@ -280,39 +285,85 @@ func bucketDetail(r attrib.Report, bucket attrib.Bucket, w int, pathStyle bool) 
 		return dimStyle.Render("nothing in this category yet")
 	}
 
-	nameW := maxInt(w-34, 20)
+	const (
+		numW   = 10
+		shareW = 7
+		countW = 6
+		gapW   = 1
+	)
+	// Size the name column to the content, not to the panel: tool names are
+	// short, and a column stretched to the full width pushes every number off to
+	// the right where they cannot be compared.
+	nameW := 12
+	for _, it := range slice.Detail {
+		if n := lipgloss.Width(it.Name) + 1; n > nameW {
+			nameW = n
+		}
+	}
+	// A note column only when there is something to put in it. The rules tab
+	// uses it for why a file was loaded, which is the whole reason that tab
+	// exists; the tools tab has nothing to say there.
+	noteW := 0
+	for _, it := range slice.Detail {
+		if it.Note == "" {
+			continue
+		}
+		if n := lipgloss.Width(it.Note) + 2; n > noteW {
+			noteW = n
+		}
+	}
+	noteW = minInt(noteW, 22)
+
+	nameW = minInt(nameW, maxInt(w-numW-shareW-countW-noteW-gapW-10, 14))
+	barW := maxInt(w-nameW-numW-shareW-countW-noteW-gapW, 6)
+
 	var b strings.Builder
-	b.WriteString(faintStyle.Render(pad("", nameW)+padLeft("tokens", 10)+padLeft("share", 8)) + "\n")
+	header := pad("", nameW) + padLeft("tokens", numW) + padLeft("share", shareW) + padLeft("uses", countW)
+	if noteW > 0 {
+		header += pad("  loaded", noteW)
+	}
+	b.WriteString(faintStyle.Render(header) + "\n")
 
 	largest := slice.Detail[0].Tokens
 	for _, it := range slice.Detail {
-		name := it.Name
+		name := trunc(it.Name, nameW-1)
 		if pathStyle {
-			name = truncPath(name, nameW)
-		} else {
-			name = trunc(name, nameW)
+			name = truncPath(it.Name, nameW-1)
 		}
-		pct := 0.0
+		share := 0.0
 		if slice.Tokens > 0 {
-			pct = float64(it.Tokens) / float64(slice.Tokens) * 100
+			share = float64(it.Tokens) / float64(slice.Tokens) * 100
 		}
-		note := it.Note
+		count := dimStyle.Render("—")
 		if it.Count > 1 {
-			note = warnStyle.Render(fmt.Sprintf("×%d", it.Count)) + " " + dimStyle.Render(note)
-		} else {
-			note = dimStyle.Render(note)
+			count = warnStyle.Render(fmt.Sprintf("×%d", it.Count))
 		}
-		fmt.Fprintf(&b, "%s%s%s  %s %s\n",
-			pad(name, nameW),
-			padLeft(numStyle.Render(comma(it.Tokens)), 10),
-			padLeft(dimStyle.Render(fmt.Sprintf("%.0f%%", pct)), 8),
-			miniBar(it.Tokens, largest, 10, bucket),
-			note,
-		)
+		row := pad(name, nameW) +
+			padLeft(numStyle.Render(comma(it.Tokens)), numW) +
+			padLeft(dimStyle.Render(fmt.Sprintf("%.0f%%", share)), shareW) +
+			padLeft(count, countW)
+		if noteW > 0 {
+			row += pad("  "+dimStyle.Render(trunc(it.Note, noteW-2)), noteW)
+		}
+		b.WriteString(row + " " + miniBar(it.Tokens, largest, barW, bucket) + "\n")
 	}
-	b.WriteString("\n" + faintStyle.Render(fmt.Sprintf("%d entries · %s tokens total",
-		len(slice.Detail), comma(slice.Tokens))))
+
+	b.WriteString("\n" + faintStyle.Render(fmt.Sprintf("%d entries · %s tokens · %s of context",
+		len(slice.Detail), comma(slice.Tokens), sharePct(slice.Tokens, r.Total))))
 	return b.String()
+}
+
+// sharePct keeps a decimal for small shares, where rounding to a whole number
+// turns a real cost into "0%".
+func sharePct(part, whole int) string {
+	if whole <= 0 {
+		return "0%"
+	}
+	pct := float64(part) / float64(whole) * 100
+	if pct < 1 {
+		return fmt.Sprintf("%.1f%%", pct)
+	}
+	return fmt.Sprintf("%.0f%%", pct)
 }
 
 func nonEmpty(ss ...string) []string {

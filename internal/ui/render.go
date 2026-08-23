@@ -103,9 +103,8 @@ func thresholdStyle(total, window int) lipgloss.Style {
 	}
 }
 
-// miniBar is the per-row bar in the legend, drawn relative to the largest row
-// rather than to the total. Scaling to the total makes every small category an
-// indistinguishable blank.
+// miniBar is a per-row bar drawn relative to the largest row rather than to the
+// total. Scaling to the total makes every small row an indistinguishable blank.
 func miniBar(tokens, largest, width int, b attrib.Bucket) string {
 	if largest <= 0 || width <= 0 {
 		return ""
