@@ -75,7 +75,7 @@ func lineTokens(l transcript.Line, snap harness.Snapshot) int {
 			// the fitted constant down by the size of the listings.
 			return 0
 		}
-		return EstimateStrings(map[string]any(l.Attachment))
+		return Estimate(attachmentText(l.Attachment, kind))
 	}
 	if l.Message == nil {
 		return 0

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -91,9 +92,25 @@ func rotate() {
 	_ = os.Rename(LogPath(), filepath.Join(Dir(), "events.1.jsonl"))
 }
 
+// Summary is the event without its timestamp or name, for callers that render
+// those in their own columns.
+func (e Event) Summary() string {
+	var parts []string
+	if e.Tool != "" {
+		parts = append(parts, e.Tool)
+	}
+	if e.AgentType != "" {
+		parts = append(parts, "["+e.AgentType+"]")
+	}
+	if t := e.label(); t != "" {
+		parts = append(parts, t)
+	}
+	return strings.Join(parts, "  ")
+}
+
 // String renders an event for the plain-text log view.
 func (e Event) String() string {
-	s := fmt.Sprintf("%s  %-22s", e.TS.Format("15:04:05"), e.Event)
+	s := fmt.Sprintf("%s  %-22s", e.TS.Local().Format("15:04:05"), e.Event)
 	if e.Tool != "" {
 		s += "  " + e.Tool
 	}

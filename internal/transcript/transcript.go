@@ -98,6 +98,17 @@ type Line struct {
 	Attachment  map[string]any  `json:"attachment"`
 	Compact     *CompactMeta    `json:"compactMetadata"`
 	Effort      json.RawMessage `json:"effort"`
+	// Hook bookkeeping, present on stop_hook_summary lines. This is the only
+	// place the actual command path of a hook appears; the attachments carry a
+	// human-facing description instead.
+	HookCount int        `json:"hookCount"`
+	HookInfos []HookInfo `json:"hookInfos"`
+}
+
+// HookInfo is one entry of a stop_hook_summary.
+type HookInfo struct {
+	Command    string `json:"command"`
+	DurationMS int    `json:"durationMs"`
 }
 
 // CompactMeta describes a compaction event. preTokens is a free, exact record

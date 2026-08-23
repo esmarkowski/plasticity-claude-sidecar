@@ -31,6 +31,7 @@ var bucketColor = map[attrib.Bucket]lipgloss.AdaptiveColor{
 	attrib.BucketThinking:     {Light: "#9A4FA8", Dark: "#CE85DC"},
 	attrib.BucketToolCalls:    {Light: "#C4661F", Dark: "#EFA05A"},
 	attrib.BucketToolResults:  {Light: "#B2453C", Dark: "#EE8177"},
+	attrib.BucketHookOutput:   {Light: "#8A5A2B", Dark: "#C89A5F"},
 	attrib.BucketReminders:    {Light: "#6E7484", Dark: "#9299A8"},
 	attrib.BucketUnattributed: {Light: "#9AA0AE", Dark: "#5B6170"},
 }

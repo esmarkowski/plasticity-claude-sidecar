@@ -26,6 +26,7 @@ const (
 	BucketThinking     Bucket = "thinking"
 	BucketToolCalls    Bucket = "tool calls"
 	BucketToolResults  Bucket = "tool results"
+	BucketHookOutput   Bucket = "hook injections"
 	BucketReminders    Bucket = "reminders & attachments"
 	BucketUnattributed Bucket = "unattributed"
 )
@@ -46,11 +47,13 @@ var exactBucket = map[Bucket]bool{
 // not listed falls into reminders, which is the right default: unknown
 // attachments are injected notices.
 var attachmentBucket = map[string]Bucket{
-	"skill_listing":          BucketSkills,
-	"invoked_skills":         BucketSkills,
-	"agent_listing_delta":    BucketAgents,
-	"deferred_tools_delta":   BucketToolDeltas,
-	"mcp_instructions_delta": BucketToolDeltas,
+	"hook_success":            BucketHookOutput,
+	"hook_non_blocking_error": BucketHookOutput,
+	"skill_listing":           BucketSkills,
+	"invoked_skills":          BucketSkills,
+	"agent_listing_delta":     BucketAgents,
+	"deferred_tools_delta":    BucketToolDeltas,
+	"mcp_instructions_delta":  BucketToolDeltas,
 }
 
 // Slice is one row of the breakdown.
@@ -196,7 +199,7 @@ func AnalyzeWith(lines []transcript.Line, events []event.Event, snap harness.Sna
 			if snap.OK() && (b == BucketSkills || b == BucketAgents) {
 				continue
 			}
-			add(b, kind, EstimateStrings(map[string]any(l.Attachment)))
+			add(b, attachmentLabel(l.Attachment, kind), Estimate(attachmentText(l.Attachment, kind)))
 
 		case l.Message != nil:
 			if l.CWD != "" {
@@ -456,4 +459,44 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// injectedField names, per attachment type, the single field whose text actually
+// reaches the model.
+//
+// Summing every string in the attachment is the right default — the payload key
+// differs by type and new types appear regularly — but it is wrong wherever an
+// attachment repeats itself. A hook_success carries the same text in both
+// `content` and `stdout`, so the default would charge a hook twice for one
+// injection.
+var injectedField = map[string]string{
+	"hook_success": "content",
+}
+
+// attachmentText returns the text an attachment contributed to context.
+func attachmentText(att map[string]any, kind string) string {
+	if field, ok := injectedField[kind]; ok {
+		s, _ := att[field].(string)
+		return s
+	}
+	if kind == "hook_non_blocking_error" {
+		// A failed hook injects the notice about it, not the whole of stderr,
+		// and certainly not the stdout it never got to produce.
+		s, _ := att["stderr"].(string)
+		return s
+	}
+	return Strings(map[string]any(att))
+}
+
+// attachmentLabel names the drill-down row. For hook attachments that is the
+// hook itself, so the breakdown says which hook is costing tokens rather than
+// just that some hook is.
+func attachmentLabel(att map[string]any, kind string) string {
+	switch kind {
+	case "hook_success", "hook_non_blocking_error":
+		if name, _ := att["hookName"].(string); name != "" {
+			return name
+		}
+	}
+	return kind
 }

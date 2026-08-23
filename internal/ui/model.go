@@ -43,6 +43,7 @@ type Model struct {
 	audit    []attrib.AuditPoint
 	snapshot harness.Snapshot
 	agents   []Agent
+	hooks    []transcript.HookRun
 
 	tab    Tab
 	scroll map[Tab]int
@@ -116,6 +117,7 @@ type loadedMsg struct {
 	audit    []attrib.AuditPoint
 	snapshot harness.Snapshot
 	agents   []Agent
+	hooks    []transcript.HookRun
 	err      error
 }
 
@@ -168,6 +170,10 @@ func analyze(want string, follow bool) loadedMsg {
 			audit:    attrib.Audit(lines, evs, snap),
 			snapshot: snap,
 			agents:   loadAgents(cur, evs),
+			// Hook failures come from the transcript rather than our own log:
+			// a hook that fails to start never writes anything, so only Claude
+			// Code's own record of it exists.
+			hooks: transcript.Hooks(lines),
 		}
 	}
 }
@@ -215,6 +221,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.audit = msg.audit
 		m.snapshot = msg.snapshot
 		m.agents = msg.agents
+		m.hooks = msg.hooks
 		m.lastLoad = time.Now()
 		// Watch the new session's directories: following a session means
 		// following its files.

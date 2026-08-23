@@ -91,3 +91,37 @@ func TestFitRecoversKnownRelationship(t *testing.T) {
 		t.Errorf("Fit base = %d, want ~%d", c.Base, base)
 	}
 }
+
+// A hook_success repeats its injected text in both `content` and `stdout`.
+// Summing every string — the right default for attachments generally — charges
+// the hook twice for one injection.
+func TestAttachmentTextDoesNotDoubleCountHookOutput(t *testing.T) {
+	const injected = "CAVEMAN MODE ACTIVE — respond terse."
+	att := map[string]any{
+		"type":     "hook_success",
+		"hookName": "SessionStart:resume",
+		"content":  injected,
+		"stdout":   injected,
+		"stderr":   "",
+		"command":  "Loading caveman mode...",
+	}
+	if got, want := attachmentText(att, "hook_success"), injected; got != want {
+		t.Fatalf("attachmentText = %q, want only the injected content", got)
+	}
+	// And the row is named for the hook, so the breakdown says which hook.
+	if got := attachmentLabel(att, "hook_success"); got != "SessionStart:resume" {
+		t.Errorf("attachmentLabel = %q, want the hook name", got)
+	}
+}
+
+// The generic path must still walk unknown attachment shapes, since new
+// attachment types appear faster than this program tracks them.
+func TestAttachmentTextFallsBackToWalkingStrings(t *testing.T) {
+	att := map[string]any{"type": "brand_new_thing", "payload": "some text"}
+	if got := attachmentText(att, "brand_new_thing"); got == "" {
+		t.Fatal("unknown attachment type measured as empty")
+	}
+	if got := attachmentLabel(att, "brand_new_thing"); got != "brand_new_thing" {
+		t.Errorf("attachmentLabel = %q", got)
+	}
+}

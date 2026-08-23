@@ -2,12 +2,15 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"claude-sidecar/internal/attrib"
+	"claude-sidecar/internal/event"
+	"claude-sidecar/internal/transcript"
 )
 
 // rulesView answers "what instructions am I paying for, and why were they
@@ -90,73 +93,249 @@ func (m Model) agentsView(w int) string {
 	return b.String()
 }
 
-// hooksView is the tab that catches misconfiguration. Every hook firing is
-// recorded with its duration and exit code, so a hook that fails silently —
-// which is otherwise only visible as a stray line in the transcript — shows up
-// as a red row.
+// hooksView is the tab that catches misconfiguration.
+//
+// Failures come first and in red, because a broken hook is the one thing here
+// that is actionable and the one thing Claude Code will not otherwise tell you:
+// a non-zero exit is reported as a "non-blocking" error, which means the session
+// carries on and the only trace is a line in a transcript nobody reads.
 func (m Model) hooksView(w int) string {
-	type row struct {
-		name  string
-		count int
-		fails int
-		slow  time.Duration
-	}
-	byName := map[string]*row{}
-	var order []string
-	for _, ev := range m.events {
-		if ev.Session != "" && m.current.ID != "" && ev.Session != m.current.ID {
-			continue
-		}
-		r, ok := byName[ev.Event]
-		if !ok {
-			r = &row{name: ev.Event}
-			byName[ev.Event] = r
-			order = append(order, ev.Event)
-		}
-		r.count++
-		if ev.Event == "PostToolUseFailure" || ev.Event == "StopFailure" || ev.Event == "unparseable" {
-			r.fails++
-		}
-		if ms, ok := ev.Detail["duration_ms"].(float64); ok {
-			if d := time.Duration(ms) * time.Millisecond; d > r.slow {
-				r.slow = d
+	var b strings.Builder
+
+	failing := groupFailures(m.hooks)
+	if len(failing) > 0 {
+		b.WriteString(badStyle.Render(fmt.Sprintf("✗ %d hook%s failing", len(failing), plural(len(failing)))) + "\n\n")
+		for _, f := range failing {
+			b.WriteString("  " + badStyle.Render(pad(trunc(f.Name, 30), 31)) +
+				dimStyle.Render(pad("exit "+fmt.Sprint(f.ExitCode), 9)) +
+				faintStyle.Render(fmt.Sprintf("×%d", f.Count)) + "\n")
+			if f.Command != "" {
+				b.WriteString("    " + faintStyle.Render(trunc(f.Command, maxInt(w-6, 20))) + "\n")
+			}
+			if f.Stderr != "" {
+				b.WriteString("    " + warnStyle.Render(trunc(cleanStderr(f.Stderr), maxInt(w-6, 20))) + "\n")
 			}
 		}
+		b.WriteString("\n" + faintStyle.Render(
+			"exit 127 usually means PATH: hooks run under /bin/sh with no shell activation, "+
+				"so an interpreter needs an absolute path.") + "\n\n")
+	} else if len(m.hooks) > 0 {
+		b.WriteString(goodStyle.Render("✓ no failing hooks") + "\n\n")
 	}
 
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("Hook activity") + dimStyle.Render("  — this session") + "\n\n")
-	if len(order) == 0 {
-		b.WriteString(dimStyle.Render("no hook events for this session yet"))
+	// Hooks are allowed to add context, and one that adds a page of
+	// instructions on every session start is a recurring cost worth naming.
+	if inj := injections(m.hooks); len(inj) > 0 {
+		b.WriteString(titleStyle.Render("Injecting context") + "\n")
+		for _, f := range inj {
+			b.WriteString("  " + pad(trunc(f.Name, 30), 31) +
+				padLeft(numStyle.Render(comma(f.Tokens)), 8) + dimStyle.Render(" tok") +
+				faintStyle.Render(fmt.Sprintf("  ×%d", f.Count)) + "\n")
+		}
+		b.WriteString("\n")
+	}
+
+	// Timing is sourced from the transcript's own hook records, not from the
+	// duration_ms on a PostToolUse payload — that is how long the *tool* took,
+	// and reporting it as hook latency would be confidently wrong.
+	if timings := hookTimings(m.hooks); len(timings) > 0 {
+		b.WriteString(titleStyle.Render("Latency") + dimStyle.Render("  — a hook is on the critical path of its turn") + "\n")
+		b.WriteString(faintStyle.Render(pad("hook", 40)+padLeft("ran", 6)+padLeft("worst", 10)+padLeft("mean", 9)) + "\n")
+		for _, t := range timings {
+			style := dimStyle
+			if t.Worst > time.Second {
+				style = badStyle
+			} else if t.Worst > 200*time.Millisecond {
+				style = warnStyle
+			}
+			b.WriteString(pad(trunc(t.Name, 39), 40) +
+				padLeft(numStyle.Render(fmt.Sprint(t.Count)), 6) +
+				padLeft(style.Render(t.Worst.String()), 10) +
+				padLeft(dimStyle.Render(t.Mean().String()), 9) + "\n")
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString(titleStyle.Render("Activity") + dimStyle.Render("  — events the sidecar recorded") + "\n")
+	rows := hookActivity(m.events, m.current.ID)
+	if len(rows) == 0 {
+		b.WriteString(dimStyle.Render("no hook events for this session yet") + "\n")
 	} else {
-		b.WriteString(faintStyle.Render(pad("event", 28)+padLeft("fired", 8)+padLeft("failed", 9)+padLeft("slowest", 11)) + "\n")
-		for _, n := range order {
-			r := byName[n]
-			fails := dimStyle.Render("—")
-			if r.fails > 0 {
-				fails = badStyle.Render(fmt.Sprint(r.fails))
-			}
-			slow := dimStyle.Render("—")
-			if r.slow > 0 {
-				slow = dimStyle.Render(r.slow.String())
-			}
-			fmt.Fprintf(&b, "%s%s%s%s\n",
-				pad(n, 28), padLeft(numStyle.Render(fmt.Sprint(r.count)), 8),
-				padLeft(fails, 9), padLeft(slow, 11))
+		b.WriteString(faintStyle.Render(pad("event", 26)+padLeft("fired", 8)) + "\n")
+		for _, r := range rows {
+			b.WriteString(pad(r.name, 26) + padLeft(numStyle.Render(fmt.Sprint(r.count)), 8) + "\n")
 		}
 	}
 
 	b.WriteString("\n" + titleStyle.Render("Recent") + "\n")
 	recent := m.events
-	if len(recent) > 12 {
-		recent = recent[len(recent)-12:]
+	if len(recent) > 10 {
+		recent = recent[len(recent)-10:]
 	}
 	for i := len(recent) - 1; i >= 0; i-- {
 		ev := recent[i]
 		b.WriteString(dimStyle.Render(ev.TS.Local().Format("15:04:05")) + "  " +
-			pad(ev.Event, 22) + faintStyle.Render(trunc(ev.String(), maxInt(w-34, 10))) + "\n")
+			pad(ev.Event, 22) + faintStyle.Render(trunc(ev.Summary(), maxInt(w-34, 10))) + "\n")
 	}
 	return b.String()
+}
+
+// timing aggregates one hook's measured durations.
+type timing struct {
+	Name  string
+	Count int
+	Worst time.Duration
+	Total time.Duration
+}
+
+func (t timing) Mean() time.Duration {
+	if t.Count == 0 {
+		return 0
+	}
+	return (t.Total / time.Duration(t.Count)).Round(time.Millisecond)
+}
+
+func hookTimings(hooks []transcript.HookRun) []timing {
+	byName := map[string]*timing{}
+	var order []string
+	for _, h := range hooks {
+		if h.DurationMS <= 0 {
+			continue
+		}
+		// The attachments carry a human-facing description; the stop summary
+		// carries the real command. Prefer whichever identifies the hook.
+		name := h.Name
+		if name == "" {
+			name = h.Command
+		}
+		if name == "" {
+			continue
+		}
+		t, ok := byName[name]
+		if !ok {
+			t = &timing{Name: name}
+			byName[name] = t
+			order = append(order, name)
+		}
+		d := time.Duration(h.DurationMS) * time.Millisecond
+		t.Count++
+		t.Total += d
+		if d > t.Worst {
+			t.Worst = d
+		}
+	}
+	out := make([]timing, 0, len(order))
+	for _, k := range order {
+		out = append(out, *byName[k])
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Worst > out[j].Worst })
+	return out
+}
+
+// failure is a distinct hook failure, counted rather than listed: the same
+// broken hook fires on every turn and would otherwise bury everything else.
+type failure struct {
+	Name     string
+	Command  string
+	Stderr   string
+	ExitCode int
+	Count    int
+}
+
+func groupFailures(hooks []transcript.HookRun) []failure {
+	byKey := map[string]*failure{}
+	var order []string
+	for _, h := range hooks {
+		if !h.Failed {
+			continue
+		}
+		key := h.Name + "\x00" + fmt.Sprint(h.ExitCode)
+		f, ok := byKey[key]
+		if !ok {
+			f = &failure{Name: h.Name, Command: h.Command, Stderr: h.Stderr, ExitCode: h.ExitCode}
+			byKey[key] = f
+			order = append(order, key)
+		}
+		f.Count++
+	}
+	out := make([]failure, 0, len(order))
+	for _, k := range order {
+		out = append(out, *byKey[k])
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+	return out
+}
+
+// injection is a hook that adds text to the context window.
+type injection struct {
+	Name   string
+	Tokens int
+	Count  int
+}
+
+func injections(hooks []transcript.HookRun) []injection {
+	byName := map[string]*injection{}
+	var order []string
+	for _, h := range hooks {
+		if h.Injected == "" {
+			continue
+		}
+		in, ok := byName[h.Name]
+		if !ok {
+			in = &injection{Name: h.Name}
+			byName[h.Name] = in
+			order = append(order, h.Name)
+		}
+		in.Count++
+		in.Tokens += attrib.Estimate(h.Injected)
+	}
+	out := make([]injection, 0, len(order))
+	for _, k := range order {
+		out = append(out, *byName[k])
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Tokens > out[j].Tokens })
+	return out
+}
+
+type activityRow struct {
+	name  string
+	count int
+}
+
+func hookActivity(events []event.Event, session string) []activityRow {
+	byName := map[string]*activityRow{}
+	var order []string
+	for _, ev := range events {
+		if session != "" && ev.Session != "" && ev.Session != session {
+			continue
+		}
+		r, ok := byName[ev.Event]
+		if !ok {
+			r = &activityRow{name: ev.Event}
+			byName[ev.Event] = r
+			order = append(order, ev.Event)
+		}
+		r.count++
+	}
+	out := make([]activityRow, 0, len(order))
+	for _, k := range order {
+		out = append(out, *byName[k])
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].count > out[j].count })
+	return out
+}
+
+// cleanStderr drops the wrapper Claude Code adds so the actual error leads.
+func cleanStderr(s string) string {
+	const prefix = "Failed with non-blocking status code: "
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(s), prefix))
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // timelineView is the per-request history: where the window went, and how well
