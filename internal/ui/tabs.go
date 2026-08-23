@@ -57,38 +57,74 @@ func (m Model) toolsView(w int) string {
 	return b.String()
 }
 
-// agentsView shows each subagent's own context, broken down the same way as the
-// parent's — a subagent has its own window and can fill it independently.
+// agentsView shows each subagent on one row: its own window occupancy, broken
+// down in the same colours as everything else. A subagent has its own context
+// and can fill it independently, which is the thing worth seeing at a glance.
 func (m Model) agentsView(w int) string {
 	if len(m.agents) == 0 {
 		return dimStyle.Render("no subagents in this session")
 	}
+	const (
+		typeW    = 24
+		stateW   = 9
+		ctxW     = 10
+		reqW     = 6
+		elapsedW = 9
+		replyW   = 9
+	)
+	barW := maxInt(w-typeW-stateW-ctxW-reqW-elapsedW-replyW-1, 8)
+
+	// A subagent runs the same model as its parent, so it has the same window.
+	// Without one, stackedGauge treats the total as the whole window and every
+	// agent's bar reads as completely full regardless of size.
+	window := m.report.Window
+	if window == 0 {
+		window = defaultWindow
+	}
+
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("Subagents") + "\n\n")
-	b.WriteString(faintStyle.Render(fmt.Sprintf("%s%s%s%s%s",
-		pad("type", 28), pad("state", 10), padLeft("context", 10), padLeft("reqs", 7), padLeft("elapsed", 10))) + "\n")
+	missing := 0
+	b.WriteString(faintStyle.Render(
+		pad("agent", typeW)+pad("state", stateW)+padLeft("context", ctxW)+
+			padLeft("reqs", reqW)+padLeft("elapsed", elapsedW)+padLeft("returned", replyW)) + "\n")
 
 	for _, a := range m.agents {
 		state := dimStyle.Render("done")
 		if a.Running {
 			state = goodStyle.Render("running")
 		}
-		fmt.Fprintf(&b, "%s%s%s%s%s\n",
-			pad(trunc(a.Type, 27), 28),
-			pad(state, 10),
-			padLeft(numStyle.Render(comma(a.Report.Total)), 10),
-			padLeft(dimStyle.Render(fmt.Sprint(a.Requests)), 7),
-			padLeft(dimStyle.Render(a.Elapsed().String()), 10),
-		)
-		// One inline bar per agent: enough to see a subagent that is filling its
-		// window on tool results without leaving the list.
-		if a.Report.Total > 0 {
-			b.WriteString("  " + stackedBar(a.Report.Slices, a.Report.Total, maxInt(w-4, 10)) + "\n")
-		}
+		reply := dimStyle.Render("—")
 		if a.ReplySize > 0 {
-			b.WriteString("  " + faintStyle.Render(fmt.Sprintf("returned %s of text to the parent", byteSize(a.ReplySize))) + "\n")
+			reply = dimStyle.Render(byteSize(a.ReplySize))
 		}
-		b.WriteString("\n")
+
+		ctx, reqs, bar := faintStyle.Render("—"), faintStyle.Render("—"), ""
+		if a.Analyzed {
+			ctx = numStyle.Render(comma(a.Report.Total))
+			reqs = dimStyle.Render(fmt.Sprint(a.Requests))
+			bar = stackedGauge(a.Report.Slices, a.Report.Total, window, barW)
+		} else {
+			missing++
+			bar = faintStyle.Render(strings.Repeat("·", barW))
+		}
+
+		b.WriteString(
+			pad(trunc(a.Label(), typeW-1), typeW) +
+				pad(state, stateW) +
+				padLeft(ctx, ctxW) +
+				padLeft(reqs, reqW) +
+				padLeft(dimStyle.Render(elapsedLabel(a)), elapsedW) +
+				padLeft(reply, replyW) + " " + bar + "\n")
+	}
+
+	b.WriteString("\n" + faintStyle.Render(wrap(
+		"bar length is how full that agent's own window is; colours match the context legend.", w)))
+	if missing > 0 {
+		// Worth saying, because the alternative reading — that these agents ran
+		// with an empty context — would be wrong.
+		b.WriteString("\n" + faintStyle.Render(wrap(fmt.Sprintf(
+			"%d agent%s known only from hook events: no transcript under the session's "+
+				"subagents/ directory, so their context could not be read.", missing, plural(missing)), w)))
 	}
 	return b.String()
 }
@@ -427,25 +463,72 @@ func (m Model) timelineView(w int) string {
 	return b.String()
 }
 
-// pickerView is the session switcher. Sessions are identified by directory
-// rather than uuid, because that is how anyone actually thinks about them.
-func (m Model) pickerView() string {
+// pickerView is the session switcher.
+//
+// Each row carries the same bar as the header, so the choice is made on how full
+// a session is and what filled it rather than on a uuid and a timestamp.
+// Sessions are identified by directory, because that is how anyone thinks about
+// them.
+func (m Model) pickerView(termWidth int) string {
+	// Wide enough for a readable bar, narrow enough to read as a dialog — but
+	// never wider than the terminal, which a fixed minimum would allow.
+	boxW := minInt(minInt(maxInt(termWidth-8, 30), 92), maxInt(termWidth-2, 20))
+	contentW := boxW - panelBorder
+	labelW, numW, barW, showTime := pickerColumns(contentW)
+
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Switch session") + "\n\n")
+
 	for i, s := range m.sessions {
-		line := fmt.Sprintf("%s  %s", pad(s.Label(), 40),
-			dimStyle.Render(s.Active.Local().Format("15:04:05")))
-		if i == m.pick {
-			b.WriteString(chipOn.Render("▸") + " " + titleStyle.Render(line) + "\n")
-		} else {
-			b.WriteString("  " + dimStyle.Render(line) + "\n")
-		}
-		if i > 14 {
+		if i >= pickerSessions {
+			b.WriteString(faintStyle.Render(fmt.Sprintf("  … %d more not shown",
+				len(m.sessions)-pickerSessions)) + "\n")
 			break
 		}
+
+		marker, label := "  ", dimStyle.Render(pad(trunc(s.Label(), labelW-1), labelW))
+		if i == m.pick {
+			// A plain glyph, not a chip: chipOn pads to three columns and the
+			// row is budgeted for two.
+			marker = keyStyle.Render("▸") + " "
+			label = titleStyle.Render(pad(trunc(s.Label(), labelW-1), labelW))
+		}
+
+		sum, known := m.summary[s.ID]
+		var figure, bar string
+		switch {
+		case !known:
+			// Beyond the analysis budget, or an unreadable transcript. Say so
+			// rather than drawing an empty bar that reads as an idle session.
+			figure = faintStyle.Render(padLeft("—", numW))
+			bar = faintStyle.Render(strings.Repeat("·", barW))
+		default:
+			window := sum.Window
+			if window == 0 {
+				window = defaultWindow
+			}
+			figure = thresholdStyle(sum.Total, window).Render(
+				padLeft(fmt.Sprintf("%s / %s", compact(sum.Total), compact(window)), numW))
+			bar = stackedGauge(sum.Slices, sum.Total, window, barW)
+		}
+
+		b.WriteString(marker + label + figure + " " + bar)
+		if showTime {
+			b.WriteString(" " + dimStyle.Render(s.Active.Local().Format("15:04:05")))
+		}
+		b.WriteString("\n")
 	}
+
 	b.WriteString("\n" + helpStyle.Render("enter select · esc cancel · selecting pins the session"))
-	return panel.BorderForeground(accent).Render(b.String())
+	return panel.Width(boxW).BorderForeground(accent).Render(b.String())
+}
+
+// elapsedLabel renders a duration only when one is actually known.
+func elapsedLabel(a Agent) string {
+	if d, ok := a.Elapsed(); ok {
+		return d.String()
+	}
+	return "—"
 }
 
 func byteSize(n int) string {
@@ -511,4 +594,46 @@ func hookTimings(hooks []transcript.HookRun) []timing {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Worst > out[j].Worst })
 	return out
+}
+
+// pickerColumns fits the session row to the space available, dropping the least
+// useful columns rather than overflowing.
+//
+// Overflow here is not a cosmetic problem: the row wraps, every session takes
+// two lines, and the timestamp of one lands under the label of the next. The
+// list is already ordered by recency, so the clock is the first thing to go, and
+// the label is squeezed before the bar because a truncated project name is still
+// recognisable while a two-cell bar is not.
+func pickerColumns(contentW int) (labelW, numW, barW int, showTime bool) {
+	const (
+		markerW  = 2
+		fullNum  = 16 // "  335k / 1.0m"
+		tightNum = 13
+		timeW    = 9 // "15:04:05" plus its leading space
+		fullLbl  = 34
+		minLbl   = 14
+		minBar   = 8
+	)
+
+	numW, showTime = fullNum, true
+	// Each step gives up the least valuable thing still present.
+	for _, step := range []func(){
+		func() {},
+		func() { numW = tightNum },
+		func() { showTime = false },
+	} {
+		step()
+		fixed := markerW + numW + 1 // the space before the bar
+		if showTime {
+			fixed += timeW
+		}
+		if labelW = minInt(fullLbl, contentW-fixed-minBar); labelW >= minLbl {
+			return labelW, numW, contentW - fixed - labelW, showTime
+		}
+	}
+
+	// Narrower than the columns can survive: keep a legible label and whatever
+	// bar is left, however little that is.
+	labelW = maxInt(contentW-markerW-numW-1, 8)
+	return labelW, numW, maxInt(contentW-markerW-numW-1-labelW, 0), false
 }

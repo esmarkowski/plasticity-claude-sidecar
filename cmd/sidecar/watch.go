@@ -33,7 +33,7 @@ func watch(args []string) int {
 				state.Tab = n - 1
 			}
 		}
-		fmt.Println(ui.Render(follow, sess, state, w, h))
+		fmt.Println(ui.Render(follow, sess, state, w, h, hasFlag(args, "--picker")))
 		return 0
 	}
 

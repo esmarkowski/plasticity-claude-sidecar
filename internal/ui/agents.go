@@ -19,26 +19,67 @@ import (
 // context can be broken down with exactly the same code as the parent's. That is
 // the whole reason the analysis takes a line slice rather than a session.
 type Agent struct {
-	ID        string
-	Type      string
-	Started   time.Time
-	Ended     time.Time
-	Running   bool
-	Report    attrib.Report
-	Requests  int
+	ID      string
+	Type    string
+	Started time.Time
+	Ended   time.Time
+	Running bool
+	Report  attrib.Report
+	// Analyzed distinguishes "this agent's window was empty" from "no transcript
+	// was found for it", which look identical if both render as zero.
+	Analyzed bool
+	Requests int
+	// LastWrite is when the agent's transcript was last written, used only for
+	// ordering. It is not a start time and must not be shown as one.
+	LastWrite time.Time
 	ReplySize int
 }
 
-// Elapsed is how long the agent ran, or has been running.
-func (a Agent) Elapsed() time.Duration {
+// Label names the agent for display.
+//
+// SubagentStop does not in practice carry agent_type, whatever the hook
+// reference says, so this falls back to the id rather than rendering a blank row
+// that reads as a rendering fault.
+func (a Agent) Label() string {
+	if a.Type != "" {
+		return a.Type
+	}
+	id := a.ID
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	return "agent " + id
+}
+
+// Elapsed is how long the agent ran, or has been running, and whether that is
+// known at all.
+//
+// It is only knowable from SubagentStart/Stop events. For an agent found by its
+// transcript alone the start time is the file's mtime, which is when it
+// *finished* — reporting a duration from that would be inventing one.
+func (a Agent) Elapsed() (time.Duration, bool) {
+	if a.Started.IsZero() {
+		return 0, false
+	}
 	end := a.Ended
 	if a.Running {
 		end = time.Now()
 	}
-	if a.Started.IsZero() || end.Before(a.Started) {
-		return 0
+	if end.IsZero() || end.Before(a.Started) {
+		return 0, false
 	}
-	return end.Sub(a.Started).Round(time.Second)
+	return end.Sub(a.Started).Round(time.Second), true
+}
+
+// recency is whatever is known about when this agent was last active.
+func (a Agent) recency() time.Time {
+	if !a.Ended.IsZero() {
+		return a.Ended
+	}
+	if !a.Started.IsZero() {
+		return a.Started
+	}
+	return a.LastWrite
 }
 
 // loadAgents pairs SubagentStart/Stop events with the transcripts on disk.
@@ -78,9 +119,9 @@ func loadAgents(s session.Session, events []event.Event) []Agent {
 		id := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(p), "agent-"), ".jsonl")
 		a, ok := byID[id]
 		if !ok {
-			// A subagent from a session that predates the hooks: no events, but
+			// A subagent from before the hooks were installed: no events, but
 			// its transcript is still readable and worth showing.
-			a = &Agent{ID: id, Type: "(before hooks)"}
+			a = &Agent{ID: id}
 			byID[id] = a
 		}
 		lines, err := transcript.Load(p)
@@ -88,10 +129,11 @@ func loadAgents(s session.Session, events []event.Event) []Agent {
 			continue
 		}
 		a.Report = attrib.Analyze(lines, events)
+		a.Analyzed = true
 		a.Requests = a.Report.Turns
-		if a.Started.IsZero() {
+		if a.LastWrite.IsZero() {
 			if fi, err := os.Stat(p); err == nil {
-				a.Started = fi.ModTime()
+				a.LastWrite = fi.ModTime()
 			}
 		}
 	}
@@ -106,7 +148,7 @@ func loadAgents(s session.Session, events []event.Event) []Agent {
 		if out[i].Running != out[j].Running {
 			return out[i].Running
 		}
-		return out[i].Started.After(out[j].Started)
+		return out[i].recency().After(out[j].recency())
 	})
 	return out
 }

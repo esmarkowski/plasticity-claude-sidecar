@@ -17,6 +17,9 @@ const (
 	panelChrome = 4
 )
 
+// defaultWindow is assumed only until a harness probe reports the real limit.
+const defaultWindow = 1_000_000
+
 // panelWidth converts a text width into the Width() a panel needs to end up
 // exactly panelChrome wider.
 func panelWidth(text int) int { return text + panelChrome - panelBorder }
@@ -42,7 +45,7 @@ func (m Model) View() string {
 
 	if m.picker {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
-			m.pickerView(), lipgloss.WithWhitespaceChars(" "))
+			m.pickerView(m.width), lipgloss.WithWhitespaceChars(" "))
 	}
 	return strings.Join([]string{header, tabs, body, footer}, "\n")
 }
@@ -59,7 +62,7 @@ func (m Model) header(w int) string {
 
 	window := r.Window
 	if window == 0 {
-		window = 1_000_000
+		window = defaultWindow
 	}
 	pct := 0.0
 	if window > 0 {

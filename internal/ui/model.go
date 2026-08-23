@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -44,6 +45,7 @@ type Model struct {
 	snapshot harness.Snapshot
 	agents   []Agent
 	hooks    []transcript.HookRun
+	summary  map[string]summary
 
 	tab    Tab
 	scroll map[Tab]int
@@ -122,6 +124,7 @@ type loadedMsg struct {
 	snapshot harness.Snapshot
 	agents   []Agent
 	hooks    []transcript.HookRun
+	summary  map[string]summary
 	err      error
 }
 
@@ -145,11 +148,21 @@ func analyze(want string, follow bool) loadedMsg {
 			return loadedMsg{events: evs, err: errNoSessions}
 		}
 
+		// Summaries first, because whether a session is worth listing depends on
+		// whether anything was ever sent in it.
+		summaries := summarize(sessions, evs)
+		sessions = withContent(sessions, summaries)
+
 		cur := sessions[0]
 		if !follow && want != "" {
-			if s, ok := session.Find(evs, want); ok {
-				cur = s
+			s, ok := session.Find(evs, want)
+			if !ok {
+				// Falling back to another session here is how you end up
+				// confidently reading the wrong one's numbers.
+				return loadedMsg{events: evs, sessions: sessions, summary: summaries,
+					err: fmt.Errorf("no session matching %q — press s to choose one", want)}
 			}
+			cur = s
 		}
 
 		lines, err := transcript.Load(cur.Transcript)
@@ -177,7 +190,8 @@ func analyze(want string, follow bool) loadedMsg {
 			// Hook failures come from the transcript rather than our own log:
 			// a hook that fails to start never writes anything, so only Claude
 			// Code's own record of it exists.
-			hooks: transcript.Hooks(lines),
+			hooks:   transcript.Hooks(lines),
+			summary: summaries,
 		}
 	}
 }
@@ -185,9 +199,10 @@ func analyze(want string, follow bool) loadedMsg {
 // Render produces a single frame. Used by `watch --once`, which is how the
 // layout gets checked without a terminal — in CI, in a pipe, or from an agent
 // that has no TTY to attach to.
-func Render(follow bool, sessionID string, restored State, width, height int) string {
+func Render(follow bool, sessionID string, restored State, width, height int, picker bool) string {
 	m := New(follow, sessionID, restored)
 	m.width, m.height = width, height
+	m.picker = picker
 	updated, _ := m.Update(analyze(m.current.ID, m.follow))
 	return updated.View()
 }
@@ -226,6 +241,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.snapshot = msg.snapshot
 		m.agents = msg.agents
 		m.hooks = msg.hooks
+		m.summary = msg.summary
 		m.lastLoad = time.Now()
 		// Watch the new session's directories: following a session means
 		// following its files.
