@@ -125,3 +125,48 @@ func TestRankChildrenEmpty(t *testing.T) {
 		t.Errorf("a tool with no sub-kinds got children: %+v", got)
 	}
 }
+
+// A bucket's items have to be corrected by the same factor the bucket was, or an
+// item reports a share of its own category above 100% — which is exactly what
+// "Read 721,858 · 164% share" was.
+func TestCorrectedScalesItemsWithTheirBucket(t *testing.T) {
+	if got := corrected(1000, 0.5); got != 500 {
+		t.Errorf("corrected(1000, 0.5) = %d", got)
+	}
+	// A bucket that was never rescaled has a zero factor, which is not a licence
+	// to zero the count.
+	if got := corrected(1000, 0); got != 1000 {
+		t.Errorf("an unscaled bucket's item came out as %d", got)
+	}
+	if got := corrected(1000, 1); got != 1000 {
+		t.Errorf("a factor of one changed the count to %d", got)
+	}
+}
+
+// The parts have to move with the whole. Scaling only the parent left the "other"
+// row absorbing the difference and reporting commands that never ran.
+func TestCorrectedAllKeepsABreakdownConsistent(t *testing.T) {
+	kids := map[string]*Item{
+		"git": {Name: "git", Tokens: 600, Count: 10},
+		"gh":  {Name: "gh", Tokens: 400, Count: 5},
+	}
+	scaled := correctedAll(kids, 0.5)
+	got := rankChildren(scaled, corrected(1000, 0.5))
+
+	sum := 0
+	for _, c := range got {
+		sum += c.Tokens
+	}
+	if sum != 500 {
+		t.Errorf("the breakdown sums to %d, want the scaled parent's 500: %+v", sum, got)
+	}
+	for _, c := range got {
+		if c.Name == "other" {
+			t.Errorf("scaling invented an 'other' row: %+v", got)
+		}
+	}
+	// And the originals are untouched, since the map is the running tally.
+	if kids["git"].Tokens != 600 {
+		t.Errorf("correctedAll mutated the tally: git is now %d", kids["git"].Tokens)
+	}
+}

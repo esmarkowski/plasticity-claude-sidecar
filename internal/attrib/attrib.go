@@ -325,14 +325,27 @@ func AnalyzeWith(lines []transcript.Line, events []event.Event, snap harness.Sna
 	// own request history instead of being tuned by hand. Buckets with an exact
 	// source — the probe's constants, reasoning tokens from usage — are left
 	// alone; scaling a measurement would only add error.
-	if scale, ok := fitScale(chain, events, snap); ok {
-		r.Scale = scale
+	//
+	// The factor is tracked rather than only applied, because the drill-down
+	// items behind a bucket have to be corrected by exactly the same number. An
+	// item left on its raw estimate under a bucket that was scaled down reports a
+	// share of its own category above 100%, which is how this was noticed.
+	factor := map[Bucket]float64{}
+	rescale := func(f float64) {
 		for b := range tally {
 			if exactBucket[b] {
 				continue
 			}
-			tally[b] = int(float64(tally[b]) * scale)
+			if factor[b] == 0 {
+				factor[b] = 1
+			}
+			factor[b] *= f
+			tally[b] = int(float64(tally[b]) * f)
 		}
+	}
+	if scale, ok := fitScale(chain, events, snap); ok {
+		r.Scale = scale
+		rescale(scale)
 	}
 
 	for _, n := range tally {
@@ -364,11 +377,7 @@ func AnalyzeWith(lines []transcript.Line, events []event.Event, snap harness.Sna
 			if shrink < 0 {
 				shrink = 0
 			}
-			for b, n := range tally {
-				if !exactBucket[b] {
-					tally[b] = int(float64(n) * shrink)
-				}
-			}
+			rescale(shrink)
 		}
 	}
 
@@ -377,9 +386,11 @@ func AnalyzeWith(lines []transcript.Line, events []event.Event, snap harness.Sna
 			continue
 		}
 		s := Slice{Bucket: b, Tokens: n}
+		f := factor[b]
 		for _, it := range detail[b] {
 			item := *it
-			item.Children = rankChildren(kids[childKey(b, it.Name)], item.Tokens)
+			item.Tokens = corrected(item.Tokens, f)
+			item.Children = rankChildren(correctedAll(kids[childKey(b, it.Name)], f), item.Tokens)
 			s.Detail = append(s.Detail, item)
 		}
 		sort.Slice(s.Detail, func(i, j int) bool { return s.Detail[i].Tokens > s.Detail[j].Tokens })

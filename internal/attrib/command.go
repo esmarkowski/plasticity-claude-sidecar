@@ -188,3 +188,30 @@ func rankChildren(kids map[string]*Item, total int) []Item {
 	}
 	return kept
 }
+
+// corrected applies a bucket's correction factor to one token count.
+//
+// A zero factor means the bucket was never rescaled — an exact bucket, or a
+// session with no fitted scale yet — and is not a licence to zero the count.
+func corrected(tokens int, f float64) int {
+	if f == 0 || f == 1 {
+		return tokens
+	}
+	return int(float64(tokens) * f)
+}
+
+// correctedAll applies the factor to a breakdown, so the parts stay consistent
+// with the whole they are drawn under. Whatever rounding leaves over lands in
+// rankChildren's "other", which is what that row is for.
+func correctedAll(kids map[string]*Item, f float64) map[string]*Item {
+	if f == 0 || f == 1 || len(kids) == 0 {
+		return kids
+	}
+	out := make(map[string]*Item, len(kids))
+	for k, c := range kids {
+		scaled := *c
+		scaled.Tokens = corrected(scaled.Tokens, f)
+		out[k] = &scaled
+	}
+	return out
+}
