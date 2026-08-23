@@ -28,26 +28,76 @@ func (m Model) View() string {
 	if m.width == 0 {
 		return "starting…"
 	}
-	// A rounded panel costs 2 columns of border and 2 of padding, and lipgloss
-	// sizes a style by its content box. Getting this wrong by even one column
-	// makes every bar wrap onto a second line.
-	inner := m.width - panelChrome
-
-	header := m.header(inner)
-	tabs := m.tabs(inner)
-	footer := m.footer(inner)
-
-	// Measure the chrome rather than assuming it. The header grows a row when
-	// hooks are failing, and a hardcoded height would silently eat the last line
-	// of every tab whenever it did.
-	chrome := lipgloss.Height(header) + lipgloss.Height(tabs) + lipgloss.Height(footer) + panelBorder
-	body := panel.Width(panelWidth(inner)).Render(m.body(inner, m.height-chrome))
-
 	if m.picker {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
 			m.pickerView(m.width), lipgloss.WithWhitespaceChars(" "))
 	}
-	return strings.Join([]string{header, tabs, body, footer}, "\n")
+	// The body comes out of the viewport, which was filled and scrolled in
+	// refresh: content and geometry have to be settled before a mouse wheel can
+	// be clamped against them, and Update is the only place that can happen.
+	inner := m.width - panelChrome
+	return strings.Join([]string{
+		m.header(inner),
+		m.bar.row,
+		panel.Width(panelWidth(inner)).Render(m.vp.View()),
+		m.footer(inner),
+	}, "\n")
+}
+
+// refresh re-lays out the whole frame: chip row, viewport size, viewport
+// content, and the scroll offset needed to keep the cursor in view.
+//
+// Done in Update rather than in View because the viewport has to be holding the
+// current content and size before the next message arrives — a mouse wheel is
+// clamped against how many lines there are, and a stale viewport clamps against
+// the wrong number.
+func (m *Model) refresh() {
+	if m.width == 0 || m.height == 0 {
+		return
+	}
+	inner := m.width - panelChrome
+
+	m.bar = m.tabsBar(inner)
+	header := m.header(inner)
+	// Measure the chrome rather than assuming it. The header grows a row when
+	// hooks are failing, and a hardcoded height would silently eat the last line
+	// of every tab whenever it did.
+	m.bar.y = lipgloss.Height(header)
+	chrome := lipgloss.Height(header) + lipgloss.Height(m.bar.row) +
+		lipgloss.Height(m.footer(inner)) + panelBorder
+
+	m.vp.Width = inner
+	m.vp.Height = maxInt(m.height-chrome, 3)
+
+	body := m.body(inner)
+	m.vp.SetContent(body)
+	if m.chase {
+		m.scrollToCursor(strings.Split(body, "\n"))
+		m.chase = false
+	}
+}
+
+// scrollToCursor brings the cursor's row into view, and leaves the offset alone
+// when it is already there.
+//
+// Only called when the cursor has just moved. Running it on every refresh meant
+// the two-second reload dragged the view back to wherever the cursor was parked,
+// so scrolling the timeline by wheel lasted about two seconds.
+//
+// The cursor is found by looking for its marker rather than tracked as a line
+// number, because a row is not one line — a tool with its breakdown open is
+// seven — and every renderer would otherwise have to report where it put things.
+func (m *Model) scrollToCursor(lines []string) {
+	at := markedLine(lines)
+	if at < 0 {
+		return
+	}
+	switch {
+	case at < m.vp.YOffset:
+		m.vp.SetYOffset(at)
+	case at >= m.vp.YOffset+m.vp.Height:
+		m.vp.SetYOffset(at - m.vp.Height + 1)
+	}
 }
 
 // header is always visible: which session, how full, and under what settings.
@@ -96,37 +146,6 @@ func (m Model) header(w int) string {
 		strings.Join([]string{line1, line2, dimStyle.Render(truncPath(r.CWD, w))}, "\n"))
 }
 
-func (m Model) tabs(w int) string {
-	failing := m.failingHooks()
-
-	// Two labellings, widest first. The chip row is the one piece of chrome that
-	// cannot wrap without shifting the whole layout down a line, so it degrades
-	// to numbers rather than overflowing — the active tab keeps its name, since
-	// that is the one you need to read.
-	for _, full := range []bool{true, false} {
-		var parts []string
-		for i, name := range tabNames {
-			label := fmt.Sprint(i + 1)
-			if full || Tab(i) == m.tab {
-				label += " " + name
-			}
-			if Tab(i) == TabHooks && failing > 0 {
-				label += fmt.Sprintf(" ✗%d", failing)
-			}
-			if Tab(i) == m.tab {
-				parts = append(parts, chipOn.Render(label))
-			} else {
-				parts = append(parts, chipOff.Render(label))
-			}
-		}
-		row := lipgloss.JoinHorizontal(lipgloss.Top, parts...)
-		if lipgloss.Width(row) <= w || !full {
-			return row
-		}
-	}
-	return ""
-}
-
 func (m Model) footer(w int) string {
 	live := goodStyle.Render("● live")
 	switch {
@@ -136,10 +155,26 @@ func (m Model) footer(w int) string {
 		live = warnStyle.Render("● estimated · sidecar probe")
 	}
 
+	// Where the body is scrolled to. The viewport draws no banner of its own, and
+	// being scrolled has to be visible: without this the view is indistinguishable
+	// from a short tab, and content above the fold — which is where anything
+	// urgent is put — silently does not exist.
+	if !(m.vp.AtTop() && m.vp.AtBottom()) {
+		live = dimStyle.Render(fmt.Sprintf("↕ %.0f%%  ", m.vp.ScrollPercent()*100)) + live
+	}
+
 	// Drop hints from the right until the row fits. A footer that wraps pushes
 	// the whole layout up by a line and makes the dashboard jitter as the
 	// status text changes length.
-	full := []string{"1-6 tabs", "s session", "p pin", "j/k scroll", "r refresh", "q quit"}
+	//
+	// j/k is described by what it does on this tab, since on a tab with rows it
+	// moves the cursor and on one without it scrolls.
+	move, fold := "j/k scroll", ""
+	if len(m.selectableRows()) > 0 {
+		move, fold = "j/k select", "←/→ fold"
+	}
+	full := nonEmpty("tab tabs", move, fold, m.enterHint(),
+		"s session", "p pin", "r refresh", "q quit")
 	for n := len(full); n > 0; n-- {
 		left := helpStyle.Render(strings.Join(full[:n], "  ·  "))
 		if lipgloss.Width(left)+lipgloss.Width(live)+1 <= w {
@@ -149,60 +184,49 @@ func (m Model) footer(w int) string {
 	return padLeft(live, w)
 }
 
-func (m Model) body(w, h int) string {
+// enterHint names what enter does to the selected row, which is different on
+// every tab. A key whose effect is not named is a key nobody presses — and one
+// that does nothing to this row should not be advertised at all.
+func (m Model) enterHint() string {
+	ref, ok := m.selected()
+	switch {
+	case !ok:
+		return ""
+	case ref.Kind == kindBucket:
+		if _, ok := detailTab[attrib.Bucket(ref.Name)]; !ok {
+			return ""
+		}
+		return "enter detail"
+	case ref.Kind == kindHook:
+		return "enter dismiss"
+	case m.hasBreakdown(ref):
+		if m.collapsed[ref] {
+			return "enter expand"
+		}
+		return "enter collapse"
+	}
+	return ""
+}
+
+func (m Model) body(w int) string {
 	if m.err != nil && m.report.Total == 0 {
 		return m.emptyView()
 	}
-	var out string
 	switch m.tab {
 	case TabContext:
-		out = m.contextView(w)
+		return m.contextView(w)
 	case TabRules:
-		out = m.rulesView(w)
+		return m.rulesView(w)
 	case TabTools:
-		out = m.toolsView(w)
+		return m.toolsView(w)
 	case TabAgents:
-		out = m.agentsView(w)
+		return m.agentsView(w)
 	case TabHooks:
-		out = m.hooksView(w)
+		return m.hooksView(w)
 	case TabTimeline:
-		out = m.timelineView(w)
+		return m.timelineView(w)
 	}
-	return m.clip(out, h)
-}
-
-// clip applies the current tab's scroll offset and trims to the space the
-// header, tabs, and footer left over.
-func (m Model) clip(s string, h int) string {
-	lines := strings.Split(s, "\n")
-	height := maxInt(h, 5)
-
-	off := m.scroll[m.tab]
-	if max := maxInt(len(lines)-height, 0); off > max {
-		off = max
-	}
-
-	// Being scrolled has to be visible. Without this the view is indistinguishable
-	// from a short tab, and content above the fold — which is where anything
-	// urgent is put — silently does not exist. A persisted scroll offset made
-	// that permanent across restarts.
-	var head, tail string
-	if off > 0 {
-		head = warnStyle.Render(fmt.Sprintf("  ↑ %d lines above — g for top", off))
-		height--
-	}
-	lines = lines[off:]
-	if len(lines) > height {
-		lines = lines[:height]
-		tail = dimStyle.Render("  ↓ more — j to scroll")
-	}
-	if head != "" {
-		lines = append([]string{head}, lines...)
-	}
-	if tail != "" {
-		lines = append(lines, tail)
-	}
-	return strings.Join(lines, "\n")
+	return ""
 }
 
 func (m Model) emptyView() string {
@@ -234,17 +258,24 @@ func (m Model) contextView(w int) string {
 		pctW    = 7
 		gapW    = 1
 	)
-	barW := maxInt(w-swatchW-nameW-numW-pctW-gapW, 6)
+	barW := maxInt(w-gutter-swatchW-nameW-numW-pctW-gapW, 6)
 
 	for _, s := range r.Slices {
 		pct := 0.0
 		if r.Total > 0 {
 			pct = float64(s.Tokens) / float64(r.Total) * 100
 		}
+		on := m.on(kindBucket, string(s.Bucket))
 		swatch := lipgloss.NewStyle().Foreground(colorFor(s.Bucket)).Render("▐")
-		fmt.Fprintf(&b, "%s %s%s%s %s\n",
+		// A category with a tab of its own says so, since enter goes there.
+		name := string(s.Bucket)
+		if _, ok := detailTab[s.Bucket]; ok && on {
+			name += " →"
+		}
+		fmt.Fprintf(&b, "%s%s %s%s%s %s\n",
+			cursorGutter(on),
 			swatch,
-			pad(string(s.Bucket), nameW),
+			pad(selectedName(trunc(name, nameW-1), on), nameW),
 			padLeft(numStyle.Render(comma(s.Tokens)), numW),
 			padLeft(dimStyle.Render(fmt.Sprintf("%.1f%%", pct)), pctW),
 			miniBar(s.Tokens, largest, barW, s.Bucket),
@@ -270,90 +301,297 @@ func (m Model) contextView(w int) string {
 	return b.String()
 }
 
+// rowRef names one selectable row: which list it belongs to, and which row.
+//
+// A name rather than an index, because a refresh reorders the rows underneath
+// the cursor — most of them are sorted by size — and an index would quietly move
+// the selection to whatever happened to grow.
+type rowRef struct {
+	Kind string
+	Name string
+}
+
+// Row kinds that are not a bucket's drill-down. Buckets use their own name, so
+// the tools tab's two tables stay distinct without a second field.
+const (
+	kindBucket  = "bucket"
+	kindAgent   = "agent"
+	kindHook    = "hook"
+	kindRequest = "request"
+)
+
+// selectableRows is what the cursor can land on in the current tab, in the order
+// they are drawn. Empty for a tab with nothing to select, which is what makes
+// j/k fall back to scrolling there.
+func (m Model) selectableRows() []rowRef {
+	var out []rowRef
+	switch m.tab {
+	case TabContext:
+		for _, s := range m.report.Slices {
+			out = append(out, rowRef{kindBucket, string(s.Bucket)})
+		}
+	case TabRules:
+		out = append(out, bucketRows(m.report, attrib.BucketRules)...)
+	case TabTools:
+		out = append(out, bucketRows(m.report, attrib.BucketToolResults)...)
+		out = append(out, bucketRows(m.report, attrib.BucketToolCalls)...)
+	case TabAgents:
+		for _, a := range m.agents {
+			out = append(out, rowRef{kindAgent, a.ID})
+		}
+	case TabHooks:
+		current, resolved, _ := m.failureGroups()
+		for _, f := range append(current, resolved...) {
+			out = append(out, rowRef{kindHook, f.key()})
+		}
+	case TabTimeline:
+		for _, p := range m.audit {
+			out = append(out, rowRef{kindRequest, fmt.Sprint(p.Request)})
+		}
+	}
+	return out
+}
+
+func bucketRows(r attrib.Report, b attrib.Bucket) []rowRef {
+	var out []rowRef
+	for _, it := range itemsOf(r, b) {
+		out = append(out, rowRef{string(b), it.Name})
+	}
+	return out
+}
+
+// selected is the row the cursor is on, clamped: the list shrinks when a session
+// is switched or a hook stops failing, and a stale cursor should land on the last
+// row rather than nowhere.
+func (m Model) selected() (rowRef, bool) {
+	rows := m.selectableRows()
+	if len(rows) == 0 {
+		return rowRef{}, false
+	}
+	return rows[minInt(maxInt(m.cursor[m.tab], 0), len(rows)-1)], true
+}
+
+// on reports whether the cursor is on a row. Every renderer that draws rows
+// calls this, which is what makes the cursor mean the same thing everywhere.
+func (m Model) on(kind, name string) bool {
+	here, ok := m.selected()
+	return ok && here == rowRef{kind, name}
+}
+
+// itemsOf finds a bucket's rows in the report.
+func itemsOf(r attrib.Report, b attrib.Bucket) []attrib.Item {
+	for i := range r.Slices {
+		if r.Slices[i].Bucket == b {
+			return r.Slices[i].Detail
+		}
+	}
+	return nil
+}
+
+// cursorMark is drawn in the gutter of the selected row, and is also how the
+// viewport finds that row: the alternative is threading a line number back out
+// through every renderer that might contain one.
+const cursorMark = "›"
+
+// gutter is the cursor's column. Two cells on every row of every selectable
+// list, so turning the cursor on does not shift the numbers sideways.
+const gutter = 2
+
+// cursorGutter is the selected row's marker, and the blank that keeps every
+// other row in the same columns.
+func cursorGutter(on bool) string {
+	if on {
+		return accentStyle.Render(cursorMark) + " "
+	}
+	return strings.Repeat(" ", gutter)
+}
+
+// selectedName styles a row's label so the selection is legible without a
+// background: an inner style resets the background, so a highlighted row would
+// come out striped wherever the row has colour of its own.
+func selectedName(s string, on bool) string {
+	if on {
+		return accentStyle.Render(s)
+	}
+	return s
+}
+
+// detailCols is the column layout of a drill-down table. Sized once from the
+// panel width and shared by the top-level rows and the rows nested under them,
+// which is the only way the two sets of numbers line up.
+type detailCols struct {
+	name, num, share, count, note, bar int
+}
+
+// childIndent is the width a nested row's swatch and indent take out of the name
+// column: two spaces, a block, and a space.
+const childIndent = 4
+
+// markerW is the fold marker's column, held open on every row so that labels all
+// start in the same place whether or not they have anything to fold.
+const markerW = 2
+
+// layout sizes the columns for a set of rows.
+//
+// The name column is sized to the widest top-level name and never to the nested
+// ones. Sizing it to everything meant the column grew the first time a long
+// command appeared under Bash, and every number in the table stepped sideways
+// mid-refresh — the nested names are truncated to fit instead.
+func layout(items []attrib.Item, w int) detailCols {
+	c := detailCols{num: 10, share: 7, count: 6}
+	const gap = 1
+
+	c.name = 12 + gutter + markerW
+	for _, it := range items {
+		if n := lipgloss.Width(it.Name) + 1 + gutter + markerW; n > c.name {
+			c.name = n
+		}
+	}
+
+	// A note column only when there is something to put in it. The rules tab uses
+	// it for why a file was loaded, which is the whole reason that tab exists; the
+	// tools tab has nothing to say there.
+	for _, it := range items {
+		if it.Note == "" {
+			continue
+		}
+		if n := lipgloss.Width(it.Note) + 2; n > c.note {
+			c.note = n
+		}
+	}
+	c.note = minInt(c.note, 22)
+
+	c.name = minInt(c.name, maxInt(w-c.num-c.share-c.count-c.note-gap-10, 14+gutter+markerW))
+	c.bar = maxInt(w-c.name-c.num-c.share-c.count-c.note-gap, 6)
+	return c
+}
+
 // bucketDetail renders the drill-down rows behind one bucket: what, how much,
 // and what share of the category.
 //
 // Bars are scaled to the largest row rather than to the window, which is what
 // the share column is for. Scaled to the window every row here would be a
 // sliver, since a single category is a fraction of the context to begin with.
-func bucketDetail(r attrib.Report, bucket attrib.Bucket, w int, pathStyle bool) string {
+func (m Model) bucketDetail(bucket attrib.Bucket, w int, pathStyle bool) string {
 	var slice *attrib.Slice
-	for i := range r.Slices {
-		if r.Slices[i].Bucket == bucket {
-			slice = &r.Slices[i]
+	for i := range m.report.Slices {
+		if m.report.Slices[i].Bucket == bucket {
+			slice = &m.report.Slices[i]
 			break
 		}
 	}
 	if slice == nil || len(slice.Detail) == 0 {
 		return dimStyle.Render("nothing in this category yet")
 	}
-
-	const (
-		numW   = 10
-		shareW = 7
-		countW = 6
-		gapW   = 1
-	)
-	// Size the name column to the content, not to the panel: tool names are
-	// short, and a column stretched to the full width pushes every number off to
-	// the right where they cannot be compared.
-	nameW := 12
-	for _, it := range slice.Detail {
-		if n := lipgloss.Width(it.Name) + 1; n > nameW {
-			nameW = n
-		}
-	}
-	// A note column only when there is something to put in it. The rules tab
-	// uses it for why a file was loaded, which is the whole reason that tab
-	// exists; the tools tab has nothing to say there.
-	noteW := 0
-	for _, it := range slice.Detail {
-		if it.Note == "" {
-			continue
-		}
-		if n := lipgloss.Width(it.Note) + 2; n > noteW {
-			noteW = n
-		}
-	}
-	noteW = minInt(noteW, 22)
-
-	nameW = minInt(nameW, maxInt(w-numW-shareW-countW-noteW-gapW-10, 14))
-	barW := maxInt(w-nameW-numW-shareW-countW-noteW-gapW, 6)
+	cols := layout(slice.Detail, w)
+	here, hasCursor := m.selected()
 
 	var b strings.Builder
-	header := pad("", nameW) + padLeft("tokens", numW) + padLeft("share", shareW) + padLeft("uses", countW)
-	if noteW > 0 {
-		header += pad("  loaded", noteW)
+	header := pad("", cols.name) + padLeft("tokens", cols.num) +
+		padLeft("share", cols.share) + padLeft("uses", cols.count)
+	if cols.note > 0 {
+		header += pad("  loaded", cols.note)
 	}
 	b.WriteString(faintStyle.Render(header) + "\n")
 
 	largest := slice.Detail[0].Tokens
 	for _, it := range slice.Detail {
-		name := trunc(it.Name, nameW-1)
+		ref := rowRef{string(bucket), it.Name}
+		on := hasCursor && here == ref
+		open := len(it.Children) > 0 && !m.collapsed[ref]
+
+		// The fold marker's column is held open on every row, blank where there
+		// is nothing to fold. Drawing it only where it applies left the labels
+		// starting in two different places down one list.
+		mark := strings.Repeat(" ", markerW)
+		if len(it.Children) > 0 {
+			mark = foldMark(open) + " "
+		}
+		room := cols.name - 1 - gutter - markerW
+		label := trunc(it.Name, room)
 		if pathStyle {
-			name = truncPath(it.Name, nameW-1)
+			label = truncPath(it.Name, room)
 		}
-		share := 0.0
-		if slice.Tokens > 0 {
-			share = float64(it.Tokens) / float64(slice.Tokens) * 100
+		name := cursorGutter(on) + mark + selectedName(label, on)
+
+		row := pad(name, cols.name) +
+			padLeft(numStyle.Render(comma(it.Tokens)), cols.num) +
+			padLeft(dimStyle.Render(sharePct(it.Tokens, slice.Tokens)), cols.share) +
+			padLeft(uses(it.Count), cols.count)
+		if cols.note > 0 {
+			row += pad("  "+dimStyle.Render(trunc(it.Note, cols.note-2)), cols.note)
 		}
-		count := dimStyle.Render("—")
-		if it.Count > 1 {
-			count = warnStyle.Render(fmt.Sprintf("×%d", it.Count))
+		bar := miniBar(it.Tokens, largest, cols.bar, bucket)
+		if open {
+			bar = segmentBar(it.Children, it.Tokens, largest, cols.bar, bucket)
 		}
-		row := pad(name, nameW) +
-			padLeft(numStyle.Render(comma(it.Tokens)), numW) +
-			padLeft(dimStyle.Render(fmt.Sprintf("%.0f%%", share)), shareW) +
-			padLeft(count, countW)
-		if noteW > 0 {
-			row += pad("  "+dimStyle.Render(trunc(it.Note, noteW-2)), noteW)
+		b.WriteString(row + " " + bar + "\n")
+		if open {
+			b.WriteString(childDetail(it, largest, cols, bucket))
 		}
-		b.WriteString(row + " " + miniBar(it.Tokens, largest, barW, bucket) + "\n")
 	}
 
 	b.WriteString("\n" + faintStyle.Render(fmt.Sprintf("%d entries · %s tokens · %s of context",
-		len(slice.Detail), comma(slice.Tokens), sharePct(slice.Tokens, r.Total))))
+		len(slice.Detail), comma(slice.Tokens), sharePct(slice.Tokens, m.report.Total))))
 	return b.String()
+}
+
+// foldMark shows whether a row's breakdown is open, in the same glyphs a file
+// tree uses, because that is what it is.
+func foldMark(open bool) string {
+	if open {
+		return dimStyle.Render("▾")
+	}
+	return dimStyle.Render("▸")
+}
+
+// childDetail lists the parts one row is made of, under it.
+//
+// Each row's swatch is the shade its segment has in the parent's bar, and its
+// own bar is drawn at the table's scale, so it is exactly as long as that
+// segment. That is what makes the bar above readable: without the swatches it is
+// a gradient, and with them it is a legend.
+func childDetail(it attrib.Item, largest int, cols detailCols, bucket attrib.Bucket) string {
+	if len(it.Children) == 0 {
+		return ""
+	}
+	ramp := shades(bucket, len(it.Children))
+
+	var b strings.Builder
+	for i, kid := range it.Children {
+		swatch := lipgloss.NewStyle().Foreground(ramp[i]).Render("▊")
+		name := strings.Repeat(" ", gutter) + "  " + swatch + " " +
+			trunc(kid.Name, maxInt(cols.name-childIndent-gutter, 4))
+		row := pad(name, cols.name) +
+			padLeft(dimStyle.Render(comma(kid.Tokens)), cols.num) +
+			padLeft(faintStyle.Render(sharePct(kid.Tokens, it.Tokens)), cols.share) +
+			padLeft(uses(kid.Count), cols.count)
+		if cols.note > 0 {
+			row += pad("", cols.note)
+		}
+		b.WriteString(row + " " + lipgloss.NewStyle().Foreground(ramp[i]).
+			Render(strings.Repeat("▊", barCells(kid.Tokens, largest, cols.bar))) + "\n")
+	}
+	return b.String()
+}
+
+// uses renders a call count, and nothing for the single use that a count would
+// only add noise to.
+func uses(n int) string {
+	if n <= 1 {
+		return dimStyle.Render("—")
+	}
+	return warnStyle.Render(fmt.Sprintf("×%d", n))
+}
+
+// markedLine is the line the cursor is on, or -1 when nothing is selected.
+func markedLine(lines []string) int {
+	for i, l := range lines {
+		if strings.Contains(l, cursorMark) {
+			return i
+		}
+	}
+	return -1
 }
 
 // sharePct keeps a decimal for small shares, where rounding to a whole number
@@ -385,6 +623,10 @@ func nonEmpty(ss ...string) []string {
 //
 // The count is all that leaves the hooks tab. The detail stays there, where it
 // is looked for, rather than spending a header row on every other tab.
+//
+// Resolved and dismissed failures are excluded, which is the point of the badge:
+// it should go quiet when there is nothing left to fix.
 func (m Model) failingHooks() int {
-	return len(groupFailures(m.hooks))
+	current, _, _ := m.failureGroups()
+	return len(current)
 }

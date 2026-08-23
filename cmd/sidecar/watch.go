@@ -56,6 +56,10 @@ func watch(args []string) int {
 	p := tea.NewProgram(model,
 		tea.WithAltScreen(),
 		tea.WithoutSignalHandler(),
+		// Cell motion rather than all motion: clicks and the wheel are all the
+		// dashboard reads, and all-motion floods the program with a message per
+		// pointer move for nothing.
+		tea.WithMouseCellMotion(),
 	)
 
 	sigs := make(chan os.Signal, 1)

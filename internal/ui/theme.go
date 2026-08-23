@@ -1,6 +1,10 @@
 package ui
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 
 	"claude-sidecar/internal/attrib"
@@ -63,6 +67,67 @@ var (
 		Background(accent).Bold(true).Padding(0, 1)
 	chipOff = lipgloss.NewStyle().Foreground(dim).Padding(0, 1)
 
+	accentStyle = lipgloss.NewStyle().Foreground(accent).Bold(true)
+
 	keyStyle  = lipgloss.NewStyle().Foreground(accent).Bold(true)
 	helpStyle = lipgloss.NewStyle().Foreground(faint)
 )
+
+// shades derives n tellable-apart variants of a bucket's colour, for breaking
+// one row's bar into the parts that make it up.
+//
+// Variants of the one hue rather than n new hues: the parts of Bash are still
+// tool calls, and the bar should still read as the tool-calls colour. It also
+// keeps the promise bucketColor makes — a hue means one thing everywhere.
+func shades(b attrib.Bucket, n int) []lipgloss.AdaptiveColor {
+	base := colorFor(b)
+	if n < 1 {
+		n = 1
+	}
+	out := make([]lipgloss.AdaptiveColor, 0, n)
+	for i := range n {
+		// Fading stops well short of the background. Past this the tail segments
+		// of a bar are not dimmer, they are gone.
+		f := 0.0
+		if n > 1 {
+			f = 0.58 * float64(i) / float64(n-1)
+		}
+		out = append(out, lipgloss.AdaptiveColor{
+			Light: blend(base.Light, "#FFFFFF", f),
+			Dark:  blend(base.Dark, "#000000", f),
+		})
+	}
+	return out
+}
+
+// blend mixes one hex colour toward another. Unparseable input returns the base
+// unchanged: a flat colour is a worse bar, but a panic in the render loop takes
+// the whole dashboard with it.
+func blend(hex, toward string, f float64) string {
+	from, ok := parseHex(hex)
+	to, ok2 := parseHex(toward)
+	if !ok || !ok2 {
+		return hex
+	}
+	var mixed [3]int
+	for i := range mixed {
+		mixed[i] = from[i] + int(float64(to[i]-from[i])*f)
+	}
+	return fmt.Sprintf("#%02X%02X%02X", mixed[0], mixed[1], mixed[2])
+}
+
+func parseHex(hex string) ([3]int, bool) {
+	var out [3]int
+	h := strings.TrimPrefix(hex, "#")
+	if len(h) != 6 {
+		return out, false
+	}
+	for i := range out {
+		v, err := strconv.ParseUint(h[i*2:i*2+2], 16, 8)
+		if err != nil {
+			return out, false
+		}
+		out[i] = int(v)
+	}
+	return out, true
+}

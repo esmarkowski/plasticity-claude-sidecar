@@ -86,6 +86,46 @@ under `/bin/sh` with none of the user's shell activation. Two node-based hooks o
 this machine were failing silently with `exit 127: node: command not found`,
 which is exactly the kind of thing the Hooks tab surfaces.
 
+A transcript is a whole session's history, so fixing the hook does not erase the
+failures it already logged. Two things retire them. A clean run of the same hook
+resolves its earlier failures automatically — the hook proves the fix by running
+— and they move to a Resolved list, which is worth keeping visible: forty
+failures now passing is a different story from never having failed. For the hook
+that was deleted from `settings.json` and will never run again to prove anything,
+`x` dismisses the list. A dismissal is a watermark, not a delete, so the same
+hook failing again afterwards comes back on its own; `X` restores.
+
+## Moving around
+
+Every tab that draws rows has a cursor. `j`/`k` move it, `←`/`→` shut and open the
+row's breakdown, and `enter` acts on the row — what that means depends on the row,
+and the footer names it: a category on the context tab jumps to the tab that
+breaks it down, a hook failure is dismissed. `tab` and `shift+tab` move between
+tabs, which is why the arrows do not: a tree needs them more than the chip row
+does. On a tab with no rows to select, `j`/`k` fall back to scrolling.
+
+The body is a `bubbles/viewport`, so the mouse wheel scrolls it and `pgup`/`pgdn`
+page it. The viewport follows the cursor rather than the other way round, but only
+when the cursor has just moved — following it on every refresh dragged the view
+back to wherever the cursor was parked, so scrolling a long tab lasted one
+two-second tick. The chip row is hand-rolled — bubbles ships
+list, table, and viewport, none of which is a row of tabs — and records where each
+chip landed so a click can be tested against it. Each tab keeps its own scroll
+offset, since one viewport is shared by all of them.
+
+Column widths are sized from the top-level names only, never from the nested ones.
+Sizing them to everything meant the column grew the first time a long command
+appeared under Bash, and every right-aligned number in the table stepped sideways
+on the next two-second refresh.
+
+Bash is the one tool name that covers everything, so its calls are broken down by
+the program that ran. Wrappers are followed through to the real command —
+`mise exec -- bundle exec rspec` is filed under rspec, and `cd app && bin/rails
+test` under bin/rails — because a project that runs everything through mise would
+otherwise report a single row for most of a session. The parent's bar is drawn in
+segments, one shade per part, and each part's own bar is drawn at the same scale,
+so the segment and the row are the same width.
+
 ## Hot reload
 
 The emitter needs no reload — hooks exec it fresh every time, so a rebuild is
@@ -93,7 +133,8 @@ picked up by the next hook. The dashboard is a pure reader, so restarting it
 replays the log and lands in the same place. `mise run dev` rebuilds and
 restarts on save; SIGTERM is trapped so the alt-screen and raw-mode escapes are
 undone (Bubble Tea traps SIGINT but not SIGTERM, and SIGTERM is what the loop
-sends), and the active tab and scroll position are persisted across the bounce.
+sends), and the active tab, scroll position, cursor, and folded rows are all
+persisted across the bounce.
 
 A failed build leaves the previous binary running with the error printed above
 it, so a typo never costs you the window.

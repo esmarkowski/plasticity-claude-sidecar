@@ -16,44 +16,55 @@ func stackedBar(slices []attrib.Slice, total, width int) string {
 	if total <= 0 || width <= 0 {
 		return strings.Repeat("─", max(width, 0))
 	}
-	// Largest-remainder apportionment. Naive truncation loses a column per
-	// category and leaves a ragged gap at the end of the bar.
-	type seg struct {
-		bucket attrib.Bucket
-		cells  int
-		rem    float64
+	sizes := make([]int, len(slices))
+	for i, s := range slices {
+		sizes[i] = s.Tokens
 	}
-	segs := make([]seg, 0, len(slices))
+	cells := apportion(sizes, total, width)
+
+	var b strings.Builder
+	for i, s := range slices {
+		if cells[i] <= 0 {
+			continue
+		}
+		b.WriteString(lipgloss.NewStyle().Foreground(colorFor(s.Bucket)).
+			Render(strings.Repeat("█", cells[i])))
+	}
+	return b.String()
+}
+
+// apportion splits width cells among parts in proportion to their size.
+//
+// Largest-remainder, because naive truncation loses a cell per part and leaves a
+// bar visibly short of the width it was given — with a dozen categories the gap
+// at the end reads as missing data.
+func apportion(parts []int, total, width int) []int {
+	cells := make([]int, len(parts))
+	if total <= 0 || width <= 0 {
+		return cells
+	}
+	rem := make([]float64, len(parts))
 	used := 0
-	for _, s := range slices {
-		exact := float64(s.Tokens) / float64(total) * float64(width)
-		cells := int(exact)
-		segs = append(segs, seg{s.Bucket, cells, exact - float64(cells)})
-		used += cells
+	for i, n := range parts {
+		exact := float64(n) / float64(total) * float64(width)
+		cells[i] = int(exact)
+		rem[i] = exact - float64(cells[i])
+		used += cells[i]
 	}
 	for range width - used {
 		best, bestRem := -1, -1.0
-		for i := range segs {
-			if segs[i].rem > bestRem {
-				best, bestRem = i, segs[i].rem
+		for i := range rem {
+			if rem[i] > bestRem {
+				best, bestRem = i, rem[i]
 			}
 		}
 		if best < 0 {
 			break
 		}
-		segs[best].cells++
-		segs[best].rem = -1
+		cells[best]++
+		rem[best] = -1
 	}
-
-	var b strings.Builder
-	for _, s := range segs {
-		if s.cells <= 0 {
-			continue
-		}
-		b.WriteString(lipgloss.NewStyle().Foreground(colorFor(s.bucket)).
-			Render(strings.Repeat("█", s.cells)))
-	}
-	return b.String()
+	return cells
 }
 
 // stackedGauge draws the composition of the context window: the occupied part
@@ -109,11 +120,54 @@ func miniBar(tokens, largest, width int, b attrib.Bucket) string {
 	if largest <= 0 || width <= 0 {
 		return ""
 	}
+	return lipgloss.NewStyle().Foreground(colorFor(b)).
+		Render(strings.Repeat("▊", barCells(tokens, largest, width)))
+}
+
+// segmentBar draws one row's bar broken into the parts that make it up, each in
+// its own shade of the bucket's colour.
+//
+// Same length miniBar would have drawn, so a row that gets expanded does not
+// also change size, and the same scale as every other bar in the table, so a
+// child's own bar is exactly as wide as its segment here.
+func segmentBar(children []attrib.Item, tokens, largest, width int, b attrib.Bucket) string {
+	n := barCells(tokens, largest, width)
+	if len(children) == 0 || n <= 0 {
+		return miniBar(tokens, largest, width, b)
+	}
+	// Apportioned against what the children actually add up to, not against the
+	// parent's own total. They are built to be the same number, and if they ever
+	// are not, a bar that overshoots its cells wraps the table row.
+	sizes, sum := make([]int, len(children)), 0
+	for i, c := range children {
+		sizes[i] = c.Tokens
+		sum += c.Tokens
+	}
+	cells := apportion(sizes, sum, n)
+	ramp := shades(b, len(children))
+
+	var out strings.Builder
+	for i := range children {
+		if cells[i] <= 0 {
+			continue
+		}
+		out.WriteString(lipgloss.NewStyle().Foreground(ramp[i]).
+			Render(strings.Repeat("▊", cells[i])))
+	}
+	return out.String()
+}
+
+// barCells is a row's bar length. Anything with tokens gets at least one cell:
+// rounding a real cost down to an empty bar reads as nothing at all.
+func barCells(tokens, largest, width int) int {
+	if largest <= 0 || width <= 0 {
+		return 0
+	}
 	n := tokens * width / largest
 	if n == 0 && tokens > 0 {
 		n = 1
 	}
-	return lipgloss.NewStyle().Foreground(colorFor(b)).Render(strings.Repeat("▊", n))
+	return n
 }
 
 // comma groups thousands. Context sizes run to seven figures and are unreadable

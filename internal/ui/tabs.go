@@ -19,7 +19,7 @@ import (
 func (m Model) rulesView(w int) string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Instruction files in context") + "\n\n")
-	b.WriteString(bucketDetail(m.report, attrib.BucketRules, w, true))
+	b.WriteString(m.bucketDetail(attrib.BucketRules, w, true))
 
 	// Glob-matched rules are re-injected every time a matching file is touched,
 	// and each injection is paid for again. A high count with a broad glob is
@@ -51,9 +51,9 @@ func (m Model) rulesView(w int) string {
 func (m Model) toolsView(w int) string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Tool results") + dimStyle.Render("  — what came back into context") + "\n\n")
-	b.WriteString(bucketDetail(m.report, attrib.BucketToolResults, w, false))
+	b.WriteString(m.bucketDetail(attrib.BucketToolResults, w, false))
 	b.WriteString("\n\n" + titleStyle.Render("Tool calls") + dimStyle.Render("  — what we sent") + "\n\n")
-	b.WriteString(bucketDetail(m.report, attrib.BucketToolCalls, w, false))
+	b.WriteString(m.bucketDetail(attrib.BucketToolCalls, w, false))
 	return b.String()
 }
 
@@ -75,7 +75,7 @@ func (m Model) agentsView(w int) string {
 	)
 	// The task description is the widest useful thing here and the first to be
 	// squeezed; below that the bar goes, then the shorter columns.
-	fixed := typeW + stateW + ctxW + reqW + elapsedW + replyW + 1
+	fixed := gutter + typeW + stateW + ctxW + reqW + elapsedW + replyW + 1
 	taskW := minInt(maxInt(w-fixed-minBar, 0), 44)
 	barW := maxInt(w-fixed-taskW, 6)
 
@@ -89,7 +89,7 @@ func (m Model) agentsView(w int) string {
 
 	var b strings.Builder
 	missing := 0
-	header := pad("agent", typeW)
+	header := pad("", gutter) + pad("agent", typeW)
 	if taskW > 0 {
 		header += pad("task", taskW)
 	}
@@ -117,7 +117,8 @@ func (m Model) agentsView(w int) string {
 			bar = faintStyle.Render(strings.Repeat("·", barW))
 		}
 
-		row := pad(trunc(a.Label(), typeW-1), typeW)
+		on := m.on(kindAgent, a.ID)
+		row := cursorGutter(on) + pad(selectedName(trunc(a.Label(), typeW-1), on), typeW)
 		if taskW > 0 {
 			row += pad(dimStyle.Render(trunc(a.Task, taskW-1)), taskW)
 		}
@@ -194,33 +195,103 @@ func (m Model) hooksView(w int) string {
 // hookFailures is the reason this tab exists. Claude Code calls a non-zero hook
 // exit "non-blocking" and carries on, so the only trace is a line in a
 // transcript nobody reads.
+//
+// A transcript is a whole session's history, so a hook fixed mid-session keeps
+// its failures on the record forever. Two things retire them: a clean run of
+// the same hook, which is proof the fix took, and `x`, for the hook that was
+// removed from settings.json and will never run again to prove anything.
 func (m Model) hookFailures(w int) string {
-	failing := groupFailures(m.hooks)
-	if len(failing) == 0 {
-		if len(m.hooks) == 0 {
-			return dimStyle.Render("no hook records in this transcript") + "\n"
-		}
-		return goodStyle.Render("✓ no failing hooks") + "\n"
-	}
+	current, resolved, dismissed := m.failureGroups()
 
 	var b strings.Builder
-	b.WriteString(badStyle.Render(fmt.Sprintf("✗ %d hook%s failing", len(failing), plural(len(failing)))) + "\n")
-	nameW := maxInt(w-14, 12)
-	for _, f := range failing {
-		b.WriteString(badStyle.Render(pad(trunc(f.Name, nameW), nameW)) +
+	switch {
+	case len(current) > 0:
+		b.WriteString(headline(
+			badStyle.Render(fmt.Sprintf("✗ %d hook%s failing", len(current), plural(len(current)))),
+			faintStyle.Render("x to dismiss"), w) + "\n")
+	case len(m.hooks) == 0:
+		b.WriteString(dimStyle.Render("no hook records in this transcript") + "\n")
+	default:
+		b.WriteString(goodStyle.Render("✓ no failing hooks") + "\n")
+	}
+
+	nameW := maxInt(w-14-gutter, 12)
+	for _, f := range current {
+		on := m.on(kindHook, f.key())
+		style := badStyle
+		if on {
+			style = accentStyle
+		}
+		b.WriteString(cursorGutter(on) + style.Render(pad(trunc(f.Name, nameW), nameW)) +
 			dimStyle.Render(padLeft("exit "+fmt.Sprint(f.ExitCode), 9)) +
 			faintStyle.Render(fmt.Sprintf(" ×%d", f.Count)) + "\n")
 		if f.Command != "" {
-			b.WriteString("  " + faintStyle.Render(trunc(f.Command, maxInt(w-2, 10))) + "\n")
+			b.WriteString(pad("", gutter+2) +
+				faintStyle.Render(trunc(f.Command, maxInt(w-2-gutter, 10))) + "\n")
 		}
 		if f.Stderr != "" {
-			b.WriteString("  " + warnStyle.Render(trunc(cleanStderr(f.Stderr), maxInt(w-2, 10))) + "\n")
+			b.WriteString(pad("", gutter+2) +
+				warnStyle.Render(trunc(cleanStderr(f.Stderr), maxInt(w-2-gutter, 10))) + "\n")
 		}
 	}
-	if hint := failureHint(failing); hint != "" {
+	if hint := failureHint(current); hint != "" {
 		b.WriteString("\n" + faintStyle.Render(wrap(hint, w)) + "\n")
 	}
+	b.WriteString(m.hookResolved(resolved, dismissed, w))
 	return b.String()
+}
+
+// hookResolved lists the failures a later clean run already answered.
+//
+// Listed rather than dropped, because the two are not the same story: a hook
+// that failed forty times and now passes says the fix landed, and a hook that
+// never failed says nothing was ever wrong. The count is the evidence.
+func (m Model) hookResolved(resolved []failure, dismissed, w int) string {
+	if len(resolved) == 0 && dismissed == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if len(resolved) > 0 {
+		b.WriteString("\n" + titleStyle.Render("Resolved") + "\n")
+		nameW := maxInt(w-23-gutter, 12)
+		for _, f := range resolved {
+			on := m.on(kindHook, f.key())
+			// Styled before padding: an inner reset would swallow the selection
+			// colour if the label were wrapped after dimStyle had run.
+			style := dimStyle
+			if on {
+				style = accentStyle
+			}
+			b.WriteString(cursorGutter(on) +
+				style.Render(pad(trunc(f.Name, nameW), nameW)) +
+				faintStyle.Render(padLeft("exit "+fmt.Sprint(f.ExitCode), 9)) +
+				faintStyle.Render(padLeft(fmt.Sprintf("×%d", f.Count), 5)) +
+				goodStyle.Render(padLeft(passingSince(f.Since), 9)) + "\n")
+		}
+	}
+	if dismissed > 0 {
+		b.WriteString("\n" + faintStyle.Render(
+			fmt.Sprintf("%d dismissed · X to restore", dismissed)) + "\n")
+	}
+	return b.String()
+}
+
+// passingSince names when the fix landed. Time only: a transcript is one
+// session, and a date would be the same on every row.
+func passingSince(t time.Time) string {
+	if t.IsZero() {
+		return "✓ passing"
+	}
+	return "✓ " + t.Local().Format("15:04")
+}
+
+// headline puts a hint hard right of a heading, and drops it when the column is
+// too narrow to hold both — a wrapped heading costs more than the hint is worth.
+func headline(left, right string, w int) string {
+	if lipgloss.Width(left)+lipgloss.Width(right)+2 > w {
+		return left
+	}
+	return pad(left, w-lipgloss.Width(right)) + right
 }
 
 // failureHint explains the failure mode when it is one with a known cause.
@@ -313,30 +384,107 @@ type failure struct {
 	Stderr   string
 	ExitCode int
 	Count    int
+	// Last is the most recent failing run, and what a dismissal is measured
+	// against: a failure after the dismissal is a new failure and comes back.
+	Last time.Time
+	// Resolved records that a later run of the same hook came back clean. A
+	// hook proves it is fixed by running, so its failures stop being current
+	// the moment one does.
+	Resolved bool
+	// Since is when the first clean run after the last failure happened.
+	Since time.Time
 }
 
+// key identifies a failure across refreshes, which is what a dismissal has to
+// outlive. Exit code is part of it because a hook that fails a second way is a
+// second problem, and dismissing the first should not hide it.
+func (f failure) key() string { return f.Name + "#" + fmt.Sprint(f.ExitCode) }
+
+// groupFailures collapses failing runs into one row per hook and exit code, and
+// marks the ones a later clean run has already answered.
+//
+// Position in the transcript decides what came later, not the timestamp: order
+// is the one thing every record has, and the stop-summary entries carry no hook
+// name to compare against anyway.
 func groupFailures(hooks []transcript.HookRun) []failure {
 	byKey := map[string]*failure{}
+	lastAt := map[string]int{}
 	var order []string
-	for _, h := range hooks {
+	for i, h := range hooks {
 		if !h.Failed {
 			continue
 		}
-		key := h.Name + "\x00" + fmt.Sprint(h.ExitCode)
-		f, ok := byKey[key]
-		if !ok {
-			f = &failure{Name: h.Name, Command: h.Command, Stderr: h.Stderr, ExitCode: h.ExitCode}
+		f := &failure{Name: h.Name, Command: h.Command, Stderr: h.Stderr, ExitCode: h.ExitCode}
+		key := f.key()
+		if prev, ok := byKey[key]; ok {
+			f = prev
+		} else {
 			byKey[key] = f
 			order = append(order, key)
 		}
 		f.Count++
+		if h.TS.After(f.Last) {
+			f.Last = h.TS
+		}
+		lastAt[key] = i
 	}
+
+	for key, f := range byKey {
+		f.Resolved, f.Since = resolvedBy(hooks[lastAt[key]+1:], f.Name)
+	}
+
 	out := make([]failure, 0, len(order))
 	for _, k := range order {
 		out = append(out, *byKey[k])
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+	sort.Slice(out, func(i, j int) bool {
+		// Still-broken first: that is the only part of this list that asks for
+		// anything to be done.
+		if out[i].Resolved != out[j].Resolved {
+			return !out[i].Resolved
+		}
+		return out[i].Count > out[j].Count
+	})
 	return out
+}
+
+// resolvedBy reports whether a named hook ran cleanly in the runs that followed
+// its last failure, and when.
+//
+// Anonymous runs are ignored. The stop-summary entries record a command and a
+// duration but no hook name, so treating them as clean runs would clear a
+// failure on the strength of some other hook succeeding.
+func resolvedBy(later []transcript.HookRun, name string) (bool, time.Time) {
+	if name == "" {
+		return false, time.Time{}
+	}
+	for _, h := range later {
+		if !h.Failed && h.Name == name {
+			return true, h.TS
+		}
+	}
+	return false, time.Time{}
+}
+
+// failureGroups splits the transcript's failures into what is still current,
+// what a clean run has since resolved, and how many the user has dismissed.
+//
+// A dismissal is a watermark, not a delete: it hides the failure as it stood
+// when dismissed, so the same hook failing again afterwards surfaces on its own
+// rather than staying silently hidden.
+func (m Model) failureGroups() (current, resolved []failure, dismissed int) {
+	for _, f := range groupFailures(m.hooks) {
+		if at, ok := m.dismissed[f.key()]; ok && !f.Last.After(at) {
+			dismissed++
+			continue
+		}
+		if f.Resolved {
+			resolved = append(resolved, f)
+			continue
+		}
+		current = append(current, f)
+	}
+	return current, resolved, dismissed
 }
 
 // hookInjections reports hooks that add text to the context window.
@@ -441,8 +589,9 @@ func (m Model) timelineView(w int) string {
 	}
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Context growth per request") + "\n\n")
-	b.WriteString(faintStyle.Render(pad("req", 6)+padLeft("context", 11)+padLeft("Δ", 9)+
-		padLeft("measured", 11)+padLeft("residual", 11)+padLeft("thinking", 10)) + "\n")
+	b.WriteString(faintStyle.Render(pad("", gutter)+pad("req", 6)+padLeft("context", 11)+
+		padLeft("Δ", 9)+padLeft("measured", 11)+padLeft("residual", 11)+
+		padLeft("thinking", 10)) + "\n")
 
 	points := m.audit
 	prev := 0
@@ -458,8 +607,10 @@ func (m Model) timelineView(w int) string {
 			}
 			delta = style.Render(fmt.Sprintf("+%s", comma(d)))
 		}
-		fmt.Fprintf(&b, "%s%s%s%s%s%s\n",
-			pad(fmt.Sprint(p.Request), 6),
+		on := m.on(kindRequest, fmt.Sprint(p.Request))
+		fmt.Fprintf(&b, "%s%s%s%s%s%s%s\n",
+			cursorGutter(on),
+			pad(selectedName(fmt.Sprint(p.Request), on), 6),
 			padLeft(numStyle.Render(comma(p.Context)), 11),
 			padLeft(delta, 9),
 			padLeft(dimStyle.Render(comma(p.Measured)), 11),

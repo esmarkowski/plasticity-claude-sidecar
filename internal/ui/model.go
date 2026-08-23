@@ -4,8 +4,10 @@ package ui
 import (
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"claude-sidecar/internal/attrib"
@@ -48,9 +50,36 @@ type Model struct {
 	summary  map[string]summary
 
 	tab    Tab
-	scroll map[Tab]int
 	picker bool
 	pick   int
+
+	// vp scrolls the body. Its own key map is left unbound: the arrows and j/k
+	// are the cursor's, and letting the viewport claim them too would move both
+	// at once. Paging and the mouse wheel are routed to it explicitly.
+	vp viewport.Model
+	// bar is the chip row, kept from the last layout so a click can be tested
+	// against where the chips actually were.
+	bar tabBar
+	// offset remembers each tab's scroll position, because one viewport is shared
+	// by all of them and switching tabs would otherwise carry the offset over.
+	offset map[Tab]int
+	// chase asks the next layout to bring the cursor into view. Set only by the
+	// keys that move the cursor: following it on every refresh meant scrolling
+	// the timeline by wheel and being yanked back two seconds later, because the
+	// cursor was still parked on the first row.
+	chase bool
+
+	// cursor is the selected row per tab. Every tab that draws rows has one, so
+	// j/k means the same thing throughout and only falls back to scrolling on a
+	// tab with nothing to select.
+	cursor map[Tab]int
+	// collapsed folds away a row's breakdown, keyed by the row it belongs to.
+	collapsed map[rowRef]bool
+
+	// dismissed watermarks hook failures the user has acknowledged: key to the
+	// failure's most recent firing at the time it was dismissed. Anything newer
+	// than the watermark is a fresh failure and shows again.
+	dismissed map[string]time.Time
 
 	err      error
 	lastLoad time.Time
@@ -69,19 +98,34 @@ type State struct {
 	Scroll  map[int]int `json:"scroll"`
 	Session string      `json:"session"`
 	Pinned  bool        `json:"pinned"`
+	// Dismissed has to outlive the process: a hook failure dismissed before a
+	// rebuild that came back after it would make the dismissal useless.
+	Dismissed map[string]time.Time `json:"dismissed,omitempty"`
+	// Cursor and Collapsed are the same bet the scroll offset makes: a rebuild
+	// should put you back on the row you were reading.
+	Cursor    int         `json:"cursor,omitempty"`
+	Collapsed [][2]string `json:"collapsed,omitempty"`
 }
 
 // New builds the dashboard.
 func New(follow bool, sessionID string, restored State) Model {
 	m := Model{
-		tab:    Tab(restored.Tab),
-		scroll: map[Tab]int{},
-		follow: follow,
-		pinned: restored.Pinned,
+		tab:       Tab(restored.Tab),
+		offset:    map[Tab]int{},
+		cursor:    map[Tab]int{Tab(restored.Tab): restored.Cursor},
+		collapsed: map[rowRef]bool{},
+		follow:    follow,
+		pinned:    restored.Pinned,
+		dismissed: restored.Dismissed,
+	}
+	for _, r := range restored.Collapsed {
+		m.collapsed[rowRef{r[0], r[1]}] = true
 	}
 	for k, v := range restored.Scroll {
-		m.scroll[Tab(k)] = v
+		m.offset[Tab(k)] = v
 	}
+	m.vp = newViewport()
+	m.vp.YOffset = m.offset[m.tab]
 	if sessionID != "" {
 		m.current = session.Session{ID: sessionID}
 		m.follow = false
@@ -98,10 +142,35 @@ func New(follow bool, sessionID string, restored State) Model {
 // restored you below whatever the tab was trying to tell you.
 func (m Model) SaveState() State {
 	scroll := map[int]int{}
-	if off := m.scroll[m.tab]; off > 0 {
+	if off := m.vp.YOffset; off > 0 {
 		scroll[int(m.tab)] = off
 	}
-	return State{Tab: int(m.tab), Scroll: scroll, Session: m.current.ID, Pinned: m.pinned}
+	var collapsed [][2]string
+	for ref, on := range m.collapsed {
+		if on {
+			collapsed = append(collapsed, [2]string{ref.Kind, ref.Name})
+		}
+	}
+	// Sorted so a saved state file does not churn on every exit.
+	sort.Slice(collapsed, func(i, j int) bool {
+		if collapsed[i][0] != collapsed[j][0] {
+			return collapsed[i][0] < collapsed[j][0]
+		}
+		return collapsed[i][1] < collapsed[j][1]
+	})
+	return State{Tab: int(m.tab), Scroll: scroll, Session: m.current.ID, Pinned: m.pinned,
+		Dismissed: m.dismissed, Cursor: m.cursor[m.tab], Collapsed: collapsed}
+}
+
+// newViewport is the body's scroller.
+//
+// Its key map is cleared: the viewport binds the arrows, j/k, and space by
+// default, and the dashboard needs those for the cursor and for enter. Paging
+// and the mouse wheel are routed to it explicitly instead.
+func newViewport() viewport.Model {
+	vp := viewport.New(0, 0)
+	vp.KeyMap = viewport.KeyMap{}
+	return vp
 }
 
 func (m Model) Init() tea.Cmd {
@@ -211,10 +280,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.refresh()
 		return m, nil
 
+	case tea.MouseMsg:
+		return m.mouse(msg)
+
 	case tea.KeyMsg:
-		return m.key(msg)
+		updated, cmd := m.key(msg)
+		next := updated.(Model)
+		next.refresh()
+		return next, cmd
 
 	case tickMsg:
 		return m, tea.Batch(m.load(), tick())
@@ -243,6 +319,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hooks = msg.hooks
 		m.summary = msg.summary
 		m.lastLoad = time.Now()
+		m.refresh()
 		// Watch the new session's directories: following a session means
 		// following its files.
 		if m.watcher != nil {
@@ -278,17 +355,31 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c", "esc":
 		return m, tea.Quit
 	case "1", "2", "3", "4", "5", "6":
-		m.tab = Tab(msg.String()[0] - '1')
-	case "tab", "right", "l":
-		m.tab = Tab((int(m.tab) + 1) % len(tabNames))
-	case "shift+tab", "left", "h":
-		m.tab = Tab((int(m.tab) - 1 + len(tabNames)) % len(tabNames))
+		m = m.goTo(Tab(msg.String()[0] - '1'))
+	// Tab and shift+tab move between tabs; the arrows belong to the rows. Both
+	// were bound to tab switching before, which left no key for the tree.
+	case "tab":
+		m = m.goTo(Tab((int(m.tab) + 1) % len(tabNames)))
+	case "shift+tab":
+		m = m.goTo(Tab((int(m.tab) - 1 + len(tabNames)) % len(tabNames)))
 	case "down", "j":
-		m.scroll[m.tab]++
+		m = m.move(1)
 	case "up", "k":
-		m.scroll[m.tab] = maxInt(0, m.scroll[m.tab]-1)
-	case "g":
-		m.scroll[m.tab] = 0
+		m = m.move(-1)
+	case "right", "l":
+		return m.expand()
+	case "left", "h":
+		return m.collapse()
+	case "pgdown", "ctrl+d":
+		m.vp.HalfPageDown()
+	case "pgup", "ctrl+u":
+		m.vp.HalfPageUp()
+	case "g", "home":
+		m.cursor[m.tab], m.chase = 0, true
+	case "G", "end":
+		m.cursor[m.tab], m.chase = maxInt(len(m.selectableRows())-1, 0), true
+	case "enter", " ":
+		return m.activate()
 	case "s":
 		m.picker = true
 		m.pick = 0
@@ -299,8 +390,183 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "r":
 		return m, m.load()
+	case "x":
+		// Only offered where the failures are listed: a dismissal you cannot see
+		// the effect of is indistinguishable from a keystroke that did nothing.
+		if m.tab == TabHooks {
+			m.dismissed = m.dismissAll()
+		}
+	case "X":
+		if m.tab == TabHooks {
+			m.dismissed = nil
+		}
 	}
 	return m, nil
+}
+
+// move walks the cursor, or scrolls when the tab has no rows to walk.
+//
+// The scroll offset follows rather than leads: clip works out where the cursor
+// landed and brings it into view, so moving the cursor never has to know how
+// many lines a row happens to occupy.
+func (m Model) move(delta int) Model {
+	rows := m.selectableRows()
+	if len(rows) == 0 {
+		m.vp.LineDown(delta)
+		if delta < 0 {
+			m.vp.LineUp(-delta)
+		}
+		return m
+	}
+	m.cursor[m.tab] = minInt(maxInt(m.cursor[m.tab]+delta, 0), len(rows)-1)
+	m.chase = true
+	return m
+}
+
+// goTo switches tabs, parking the offset of the one being left. One viewport is
+// shared by every tab, so without this a deep scroll on one tab carries over to
+// the next and lands you below its content.
+func (m Model) goTo(t Tab) Model {
+	parked := map[Tab]int{}
+	for k, v := range m.offset {
+		parked[k] = v
+	}
+	parked[m.tab] = m.vp.YOffset
+	m.offset = parked
+	m.tab = t
+	m.vp.SetYOffset(parked[t])
+	return m
+}
+
+// expand opens the selected row, and falls through to activate for a row with
+// nothing to open — right on a category is still "show me this".
+func (m Model) expand() (tea.Model, tea.Cmd) {
+	ref, ok := m.selected()
+	if ok && m.hasBreakdown(ref) && m.collapsed[ref] {
+		return m.fold(ref, false), nil
+	}
+	if ok && m.hasBreakdown(ref) {
+		return m, nil
+	}
+	return m.activate()
+}
+
+// collapse closes the selected row. Nothing to do on a row that has no
+// breakdown: left is not a way out of the tab.
+func (m Model) collapse() (tea.Model, tea.Cmd) {
+	ref, ok := m.selected()
+	if !ok || !m.hasBreakdown(ref) || m.collapsed[ref] {
+		return m, nil
+	}
+	return m.fold(ref, true), nil
+}
+
+// fold sets a row's folded state on a copy of the map. Bubble Tea keeps the
+// previous Model, and a shared map would edit that one too.
+func (m Model) fold(ref rowRef, shut bool) Model {
+	folded := map[rowRef]bool{}
+	for k, v := range m.collapsed {
+		folded[k] = v
+	}
+	folded[ref] = shut
+	m.collapsed = folded
+	return m
+}
+
+// mouse handles the pointer: the wheel scrolls the body, and a click on the chip
+// row switches tabs. Anything else is left alone rather than guessed at.
+func (m Model) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	e := tea.MouseEvent(msg)
+	if e.Action == tea.MouseActionPress && e.Button == tea.MouseButtonLeft {
+		if t, ok := m.bar.hit(e.X, e.Y); ok {
+			next := m.goTo(t)
+			next.refresh()
+			return next, nil
+		}
+		return m, nil
+	}
+	// The viewport owns wheel handling, including how far one notch goes.
+	vp, cmd := m.vp.Update(msg)
+	m.vp = vp
+	return m, cmd
+}
+
+// activate is what enter does to the selected row, which depends on what the row
+// is: a row with a breakdown folds, a category on the context tab jumps to the
+// tab that details it, and a hook failure is dismissed.
+func (m Model) activate() (tea.Model, tea.Cmd) {
+	ref, ok := m.selected()
+	if !ok {
+		return m, nil
+	}
+	switch {
+	case ref.Kind == kindBucket:
+		if tab, ok := detailTab[attrib.Bucket(ref.Name)]; ok {
+			m.tab = tab
+		}
+	case ref.Kind == kindHook:
+		m.dismissed = m.dismissOne(ref.Name)
+	case m.hasBreakdown(ref):
+		m = m.fold(ref, !m.collapsed[ref])
+	}
+	return m, nil
+}
+
+// detailTab is the tab that breaks a category down, for the categories that have
+// one. Jumping there is the obvious thing to want from a row on the context tab.
+var detailTab = map[attrib.Bucket]Tab{
+	attrib.BucketRules:       TabRules,
+	attrib.BucketToolResults: TabTools,
+	attrib.BucketToolCalls:   TabTools,
+	attrib.BucketHookOutput:  TabHooks,
+	attrib.BucketAgents:      TabAgents,
+}
+
+// hasBreakdown reports whether a row has anything folded under it.
+func (m Model) hasBreakdown(ref rowRef) bool {
+	for _, s := range m.report.Slices {
+		if string(s.Bucket) != ref.Kind {
+			continue
+		}
+		for _, it := range s.Detail {
+			if it.Name == ref.Name {
+				return len(it.Children) > 0
+			}
+		}
+	}
+	return false
+}
+
+// dismissAll marks every failure the hooks tab is currently showing as seen.
+func (m Model) dismissAll() map[string]time.Time { return m.dismiss(nil) }
+
+// dismissOne marks a single failure as seen, which is what enter does on a
+// selected row.
+func (m Model) dismissOne(key string) map[string]time.Time {
+	return m.dismiss(map[string]bool{key: true})
+}
+
+// dismiss watermarks failures as seen — all of them, or only the keys given.
+//
+// Watermarked at the failure's last firing rather than at the wall clock, so
+// recognizing a later failure as new does not depend on the two agreeing.
+func (m Model) dismiss(only map[string]bool) map[string]time.Time {
+	out := map[string]time.Time{}
+	for k, v := range m.dismissed {
+		out[k] = v
+	}
+	for _, f := range groupFailures(m.hooks) {
+		if only != nil && !only[f.key()] {
+			continue
+		}
+		at := f.Last
+		if at.IsZero() {
+			// No timestamps in this transcript; the clock is all there is.
+			at = time.Now()
+		}
+		out[f.key()] = at
+	}
+	return out
 }
 
 // Attach wires the file watcher in. Kept separate from New so the caller owns
