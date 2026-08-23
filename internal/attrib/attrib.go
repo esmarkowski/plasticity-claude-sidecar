@@ -71,6 +71,10 @@ type Item struct {
 	Tokens int
 	Count  int
 	Note   string
+	// Children break the item into the parts that make it up, largest first,
+	// and always sum back to Tokens. Populated where one name covers work of
+	// several kinds — Bash, whose calls are every program on the machine.
+	Children []Item
 }
 
 // Report is a full attribution of one session's context window.
@@ -181,7 +185,29 @@ func AnalyzeWith(lines []transcript.Line, events []event.Event, snap harness.Sna
 		it.Count++
 	}
 
+	// Sub-items are kept beside the tally rather than on the Item, because an
+	// Item is handed out by value and these have to keep accumulating.
+	kids := map[string]map[string]*Item{}
+	addWithin := func(b Bucket, name, child string, tokens int) {
+		add(b, name, tokens)
+		if name == "" || child == "" {
+			return
+		}
+		key := childKey(b, name)
+		if kids[key] == nil {
+			kids[key] = map[string]*Item{}
+		}
+		c, ok := kids[key][child]
+		if !ok {
+			c = &Item{Name: child}
+			kids[key][child] = c
+		}
+		c.Tokens += tokens
+		c.Count++
+	}
+
 	toolByID := map[string]string{}
+	familyByID := map[string]string{}
 	thinkingBlocks := 0
 
 	for _, l := range chain {
@@ -230,13 +256,18 @@ func AnalyzeWith(lines []transcript.Line, events []event.Event, snap harness.Sna
 					}
 				case "tool_use":
 					toolByID[blk.ID] = blk.Name
-					add(BucketToolCalls, blk.Name, Estimate(string(blk.Input)))
+					familyByID[blk.ID] = toolFamily(blk.Name, blk.Input)
+					addWithin(BucketToolCalls, blk.Name, familyByID[blk.ID],
+						Estimate(string(blk.Input)))
 				case "tool_result":
 					name := toolByID[blk.ToolUseID]
 					if name == "" {
 						name = "(unknown tool)"
 					}
-					add(BucketToolResults, name, Estimate(resultText(blk)))
+					// Credited to the same family as the call it answers: what a
+					// command cost is mostly what came back from it.
+					addWithin(BucketToolResults, name, familyByID[blk.ToolUseID],
+						Estimate(resultText(blk)))
 				}
 			}
 		}
@@ -347,7 +378,9 @@ func AnalyzeWith(lines []transcript.Line, events []event.Event, snap harness.Sna
 		}
 		s := Slice{Bucket: b, Tokens: n}
 		for _, it := range detail[b] {
-			s.Detail = append(s.Detail, *it)
+			item := *it
+			item.Children = rankChildren(kids[childKey(b, it.Name)], item.Tokens)
+			s.Detail = append(s.Detail, item)
 		}
 		sort.Slice(s.Detail, func(i, j int) bool { return s.Detail[i].Tokens > s.Detail[j].Tokens })
 		r.Slices = append(r.Slices, s)
