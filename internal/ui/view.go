@@ -76,13 +76,17 @@ func (m Model) header(w int) string {
 	line1 := pad(left, w-lipgloss.Width(right)) + right
 
 	tokens := fmt.Sprintf("%s / %s", comma(r.Total), compact(window))
-	stat := fmt.Sprintf("%s  %s  %d requests", titleStyle.Render(tokens),
-		dimStyle.Render(fmt.Sprintf("%.1f%%", pct)), r.Turns)
-	gaugeW := w - lipgloss.Width(stat) - 2
-	line2 := stat + "  " + gauge(r.Total, window, maxInt(gaugeW, 8))
+	line2 := thresholdStyle(r.Total, window).Bold(true).Render(tokens) + "  " +
+		dimStyle.Render(fmt.Sprintf("%.1f%%", pct)) + "  " +
+		dimStyle.Render(fmt.Sprintf("%d requests", r.Turns))
+
+	// The composition bar gets its own full-width row. Squeezed in beside the
+	// stats it had about forty columns for a dozen categories, which rounds the
+	// small ones out of existence.
+	line3 := stackedGauge(r.Slices, r.Total, window, w)
 
 	return panel.Width(panelWidth(w)).Render(
-		strings.Join([]string{line1, line2, dimStyle.Render(truncPath(r.CWD, w))}, "\n"))
+		strings.Join([]string{line1, line2, line3, dimStyle.Render(truncPath(r.CWD, w))}, "\n"))
 }
 
 func (m Model) tabs(w int) string {
@@ -201,9 +205,6 @@ func (m Model) contextView(w int) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(stackedBar(r.Slices, r.Total, w))
-	b.WriteString("\n\n")
-
 	largest := r.Slices[0].Tokens
 	const (
 		swatchW = 2 // swatch plus its trailing space

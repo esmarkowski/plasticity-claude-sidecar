@@ -56,30 +56,51 @@ func stackedBar(slices []attrib.Slice, total, width int) string {
 	return b.String()
 }
 
-// gauge draws overall window occupancy, colouring by how close to full it is.
-// The threshold colours are the point: at 80% of the window, compaction is
-// close enough to be worth reacting to.
-func gauge(used, window, width int) string {
-	if window <= 0 {
-		window = used
-	}
-	if window <= 0 || width <= 0 {
+// stackedGauge draws the composition of the context window: the occupied part
+// broken down by category in the same hues as the legend, the rest left faint.
+//
+// It replaces what used to be two separate bars — a plain fill gauge in the
+// header and a composition bar in the body — which meant two adjacent,
+// unlabelled bars encoding different things. One bar answers both questions:
+// its length is how full the window is, its colours are what filled it.
+func stackedGauge(slices []attrib.Slice, total, window, width int) string {
+	if width <= 0 {
 		return ""
 	}
-	pct := float64(used) / float64(window)
-	filled := int(pct * float64(width))
-	if filled > width {
-		filled = width
+	if window <= 0 {
+		window = total
 	}
-	c := good
-	switch {
+	if window <= 0 || total <= 0 {
+		return faintStyle.Render(strings.Repeat("░", width))
+	}
+
+	used := int(float64(total) / float64(window) * float64(width))
+	if used > width {
+		used = width
+	}
+	// Never round a non-empty window down to nothing: a bar that reads as empty
+	// while 20k tokens are in play is worse than one cell of overstatement.
+	if used == 0 {
+		used = 1
+	}
+	return stackedBar(slices, total, used) + faintStyle.Render(strings.Repeat("░", width-used))
+}
+
+// thresholdStyle tints a figure by how close the window is to full. At 80%,
+// compaction is near enough to be worth reacting to; losing that warning was
+// the one cost of dropping the old colour-changing gauge.
+func thresholdStyle(total, window int) lipgloss.Style {
+	if window <= 0 {
+		return numStyle
+	}
+	switch pct := float64(total) / float64(window); {
 	case pct > 0.8:
-		c = bad
+		return badStyle
 	case pct > 0.5:
-		c = warn
+		return warnStyle
+	default:
+		return numStyle
 	}
-	return lipgloss.NewStyle().Foreground(c).Render(strings.Repeat("█", filled)) +
-		faintStyle.Render(strings.Repeat("░", width-filled))
 }
 
 // miniBar is the per-row bar in the legend, drawn relative to the largest row
