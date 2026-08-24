@@ -16,8 +16,15 @@ import (
 )
 
 // watch runs the live dashboard.
+//
+// Following is the default. The dashboard is nearly always opened to see what is
+// happening right now, and the window command that used to be the only way in
+// passed --follow itself — so not following by default meant the plain command
+// was the one nobody wanted. --no-follow, --session, and pinning with p all turn
+// it off.
 func watch(args []string) int {
-	follow, sess, state := hasFlag(args, "--follow"), flagValue(args, "--session"), loadUIState()
+	follow := !hasFlag(args, "--no-follow")
+	sess, state := flagValue(args, "--session"), loadUIState()
 
 	if hasFlag(args, "--once") {
 		// One frame to stdout. Renders the same view the live dashboard does,

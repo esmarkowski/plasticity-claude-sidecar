@@ -16,8 +16,9 @@ var version = "dev"
 
 const usage = `plst sidecar — agent context debugger
 
-  plst sidecar start            open the dashboard in a new window
-  plst sidecar watch [--follow] dashboard in this terminal
+  plst sidecar start            the dashboard, in this terminal, following the
+                                active session unless --no-follow or --session
+  plst sidecar window [--dev]   the dashboard in a new Ghostty window
   plst sidecar report [--json]  context attribution for the active session
   plst sidecar probe [--force]  read the harness's own /context accounting and cache it
   plst sidecar install          register the hooks in the harness settings
@@ -38,12 +39,12 @@ func main() {
 		os.Exit(events(args))
 	case "report":
 		os.Exit(report(args))
-	case "watch":
+	// watch is what start was called before, and is still what the dev loop and
+	// a good deal of shell history type. Kept working, out of the usage text.
+	case "start", "watch":
 		os.Exit(watch(args))
-	// open is what this was called before it was a plst module. Kept working
-	// rather than kept in the usage text: it costs one line and it is in
-	// somebody's shell history.
-	case "start", "open":
+	// open likewise, from before the window had a name of its own.
+	case "window", "open":
 		os.Exit(openWindow(args))
 	case "probe":
 		os.Exit(probe(args))

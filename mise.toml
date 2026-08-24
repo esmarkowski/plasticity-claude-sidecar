@@ -43,8 +43,8 @@ description = "Plain-text context attribution for the active session"
 run = "bin/plst-sidecar report"
 
 [tasks.watch]
-description = "Run the dashboard in this terminal instead of spawning a Ghostty window"
-run = "bin/plst-sidecar watch --follow"
+description = "Run the dashboard against this build"
+run = "bin/plst-sidecar start"
 
 [tasks.dev]
 description = "Hot-reload loop: rebuild and restart the dashboard on every source change"
@@ -54,5 +54,5 @@ watchexec --restart --stop-signal SIGTERM --stop-timeout 2s \
   --watch cmd --watch internal --exts go \
   -- "go build -o bin/plst-sidecar ./cmd/plst-sidecar \
       && go build -o $dir/plst-sidecar ./cmd/plst-sidecar \
-      && exec bin/plst-sidecar watch --follow"
+      && exec bin/plst-sidecar start"
 """

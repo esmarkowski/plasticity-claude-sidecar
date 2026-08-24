@@ -11,8 +11,8 @@ A debugging companion for Claude Code. It answers one question the harness does
 not: **what is actually filling the context window right now, and why.**
 
 ```
-plst sidecar start           # live dashboard in its own Ghostty window
-plst sidecar watch --follow  # the same dashboard in the current terminal
+plst sidecar start           # live dashboard, following the active session
+plst sidecar window          # the same dashboard in its own Ghostty window
 plst sidecar report --detail
 plst sidecar report --audit  # per-request residual — the engine's own regression check
 plst sidecar probe           # read Claude Code's /context accounting and cache it
