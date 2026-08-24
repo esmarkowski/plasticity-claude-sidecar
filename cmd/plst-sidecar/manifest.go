@@ -30,8 +30,7 @@ func manifest() int {
 		Version:     version,
 	}
 	for _, c := range [][2]string{
-		{"start", "the dashboard, in this terminal"},
-		{"window", "the dashboard in a new Ghostty window"},
+		{"start", "the dashboard; --window for a new Ghostty window"},
 		{"report", "context attribution for the active session"},
 		{"probe", "read the harness's own /context accounting"},
 		{"install", "register the hooks in the harness settings"},
