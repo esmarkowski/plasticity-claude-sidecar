@@ -13,6 +13,7 @@ import (
 	"github.com/esmarkowski/plasticity-claude-sidecar/internal/attrib"
 	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
 	"github.com/esmarkowski/plasticity-claude-sidecar/internal/harness"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/memory"
 	"github.com/esmarkowski/plasticity-claude-sidecar/internal/session"
 	"github.com/esmarkowski/plasticity-claude-sidecar/internal/transcript"
 )
@@ -47,6 +48,7 @@ type Model struct {
 	snapshot harness.Snapshot
 	agents   []Agent
 	hooks    []transcript.HookRun
+	memory   memory.Store
 	summary  map[string]summary
 
 	tab    Tab
@@ -202,6 +204,7 @@ type loadedMsg struct {
 	snapshot harness.Snapshot
 	agents   []Agent
 	hooks    []transcript.HookRun
+	memory   memory.Store
 	summary  map[string]summary
 	err      error
 }
@@ -268,7 +271,11 @@ func analyze(want string, follow bool) loadedMsg {
 			// Hook failures come from the transcript rather than our own log:
 			// a hook that fails to start never writes anything, so only Claude
 			// Code's own record of it exists.
-			hooks:   transcript.Hooks(lines),
+			hooks: transcript.Hooks(lines),
+			// Read off disk rather than out of the transcript, which has nothing
+			// to say about it. The harness names the store's location; see
+			// internal/memory.
+			memory:  memory.Load(memory.Dir(snap.Memory, cur.Transcript)),
 			summary: summaries,
 		}
 	}
@@ -326,6 +333,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.snapshot = msg.snapshot
 		m.agents = msg.agents
 		m.hooks = msg.hooks
+		m.memory = msg.memory
 		m.summary = msg.summary
 		m.lastLoad = time.Now()
 		m.refresh()

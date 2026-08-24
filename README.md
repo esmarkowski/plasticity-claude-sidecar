@@ -69,6 +69,24 @@ reasoning tokens **accumulate** in the window rather than being dropped per
 turn. Treating them as cumulative fits better (R² 0.998 vs 0.997) and recovers a
 constant matching what `/context` independently reports.
 
+## Memory
+
+The rules tab lists the project's memory store under the instruction files.
+
+What it can say and what it cannot are different things, and the tab says which
+is which. The index, `MEMORY.md`, is loaded at session start and the harness
+reports it by name and exact size, so `loaded` there is a measurement. The
+memories under it are recalled on demand and nothing records which — no
+transcript on the machine this was written on carries a recalled memory's text,
+and no system reminder names one — so the token counts beside them are what each
+would cost if recalled, not what is in the window. A memory the index no longer
+links to is flagged: it is on disk, unreachable, and never going to be recalled.
+
+The store is found by asking the harness rather than by deriving it from the
+transcript's directory. It is keyed to the project, not the working directory, so
+a session running in a worktree reads the memories of the repo the worktree came
+from — and guessing from the transcript path finds nothing there at all.
+
 ## Architecture
 
 ```

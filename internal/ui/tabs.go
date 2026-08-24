@@ -10,6 +10,7 @@ import (
 
 	"github.com/esmarkowski/plasticity-claude-sidecar/internal/attrib"
 	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/memory"
 	"github.com/esmarkowski/plasticity-claude-sidecar/internal/transcript"
 )
 
@@ -41,6 +42,57 @@ func (m Model) rulesView(w int) string {
 			b.WriteString("  " + dimStyle.Render(r) + "\n")
 		}
 		b.WriteString(faintStyle.Render("  a rule whose globs are broad is charged again on every match"))
+	}
+	b.WriteString(m.memoryView(w))
+	return b.String()
+}
+
+// memoryView lists the project's memory store.
+//
+// Under rules rather than in a tab of its own, because it is one short list and a
+// tab would promise more than it can deliver. What it can say is what exists and
+// what each would cost; what it cannot say is which were recalled, and that is
+// said out loud rather than left to be assumed from a list of files.
+func (m Model) memoryView(w int) string {
+	store := m.memory
+	if store.Empty() {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\n\n" + titleStyle.Render("Memory") +
+		dimStyle.Render("  — what this project has been told to remember") + "\n\n")
+
+	nameW := maxInt(minInt(w-34, 46), 16)
+	b.WriteString(faintStyle.Render(pad("", gutter)+pad("memory", nameW)+
+		padLeft("tokens", 9)+padLeft("kind", 10)+"  in index") + "\n")
+
+	// The index first and always, because it is the one part of this that is
+	// measurably in the window.
+	if store.Index.Tokens > 0 {
+		b.WriteString(pad("", gutter) + pad(trunc(memory.IndexFile, nameW-1), nameW) +
+			padLeft(numStyle.Render(comma(store.Index.Tokens)), 9) +
+			padLeft(dimStyle.Render("index"), 10) +
+			"  " + goodStyle.Render("loaded") + "\n")
+	}
+	for _, n := range store.Notes {
+		mark := warnStyle.Render("orphan")
+		if n.Indexed {
+			mark = dimStyle.Render("yes")
+		}
+		b.WriteString(pad("", gutter) + pad(trunc(n.Title, nameW-1), nameW) +
+			padLeft(dimStyle.Render(comma(n.Tokens)), 9) +
+			padLeft(faintStyle.Render(n.Kind), 10) + "  " + mark + "\n")
+	}
+
+	b.WriteString("\n" + faintStyle.Render(wrap(fmt.Sprintf(
+		"the index is loaded at session start; the %d memories under it are recalled on "+
+			"demand and nothing records which, so these are what each would cost rather "+
+			"than what is in the window now.", len(store.Notes)), w)) + "\n")
+	if orphans := store.Orphans(); len(orphans) > 0 {
+		b.WriteString(warnStyle.Render(fmt.Sprintf(
+			"%d memor%s not linked from the index — on disk, and never recalled",
+			len(orphans), map[bool]string{true: "y is", false: "ies are"}[len(orphans) == 1])) + "\n")
 	}
 	return b.String()
 }

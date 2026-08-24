@@ -125,3 +125,37 @@ func TestAttachmentTextFallsBackToWalkingStrings(t *testing.T) {
 		t.Errorf("attachmentLabel = %q", got)
 	}
 }
+
+// A rule or memory file pulled in mid-session arrives as an attachment carrying
+// the whole text. It was falling through to reminders, which put instruction
+// files the user wrote in the same bucket as harness notices and left the rules
+// tab unable to name them.
+func TestNestedMemoryIsARuleAndIsNamedByItsPath(t *testing.T) {
+	att := map[string]any{
+		"type": "nested_memory",
+		"path": "/repo/.claude/rules/models.md",
+		"content": map[string]any{
+			"path":    "/repo/.claude/rules/models.md",
+			"type":    "Project",
+			"content": "# Models\n\nUse concerns.\n",
+		},
+	}
+	if got := attachmentBucket["nested_memory"]; got != BucketRules {
+		t.Errorf("nested_memory is filed under %q, want rules & memory", got)
+	}
+	if got := attachmentLabel(att, "nested_memory"); got != "/repo/.claude/rules/models.md" {
+		t.Errorf("label = %q, want the file's path", got)
+	}
+	// The text that reaches the model, not every string in the attachment: the
+	// path appears twice and charging a rule for its own name is not measuring.
+	got := attachmentText(att, "nested_memory")
+	if got != "# Models\n\nUse concerns.\n" {
+		t.Errorf("text = %q", got)
+	}
+	// A shape other than the one seen falls back to everything, since too much
+	// beats silently zero.
+	odd := map[string]any{"type": "nested_memory", "content": "flat string"}
+	if attachmentText(odd, "nested_memory") == "" {
+		t.Error("an unfamiliar shape was measured as nothing")
+	}
+}

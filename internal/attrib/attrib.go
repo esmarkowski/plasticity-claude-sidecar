@@ -54,6 +54,11 @@ var attachmentBucket = map[string]Bucket{
 	"agent_listing_delta":     BucketAgents,
 	"deferred_tools_delta":    BucketToolDeltas,
 	"mcp_instructions_delta":  BucketToolDeltas,
+	// A rule or memory file pulled in mid-session, with its whole text. It was
+	// falling through to reminders, which put instruction files the user wrote
+	// in the same bucket as harness notices and left the rules tab unable to
+	// name them at all.
+	"nested_memory": BucketRules,
 }
 
 // Slice is one row of the breakdown.
@@ -521,8 +526,28 @@ var injectedField = map[string]string{
 	"hook_success": "content",
 }
 
+// nestedText pulls the text out of an attachment that wraps another object.
+//
+// A nested_memory carries the file's path twice and its type once alongside the
+// content, and summing every string in it charges an instruction file for its own
+// name. Small, but it is the difference between a measurement and an estimate of
+// a measurement.
+func nestedText(att map[string]any) string {
+	inner, ok := att["content"].(map[string]any)
+	if !ok {
+		// Some other shape than the one seen. Falling back to everything is the
+		// safer wrong answer: too much beats silently zero.
+		return Strings(map[string]any(att))
+	}
+	s, _ := inner["content"].(string)
+	return s
+}
+
 // attachmentText returns the text an attachment contributed to context.
 func attachmentText(att map[string]any, kind string) string {
+	if kind == "nested_memory" {
+		return nestedText(att)
+	}
 	if field, ok := injectedField[kind]; ok {
 		s, _ := att[field].(string)
 		return s
@@ -544,6 +569,12 @@ func attachmentLabel(att map[string]any, kind string) string {
 	case "hook_success", "hook_non_blocking_error":
 		if name, _ := att["hookName"].(string); name != "" {
 			return name
+		}
+	case "nested_memory":
+		// The path, so the rules tab names the file rather than the mechanism
+		// that delivered it.
+		if p, _ := att["path"].(string); p != "" {
+			return p
 		}
 	}
 	return kind
