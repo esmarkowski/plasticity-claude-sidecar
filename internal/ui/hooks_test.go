@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"claude-sidecar/internal/transcript"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/transcript"
 )
 
 func at(min int) time.Time {

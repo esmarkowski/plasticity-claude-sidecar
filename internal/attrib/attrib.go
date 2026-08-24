@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"claude-sidecar/internal/event"
-	"claude-sidecar/internal/harness"
-	"claude-sidecar/internal/transcript"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/harness"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/transcript"
 )
 
 // Bucket names a category of text in the context window. Order here is the

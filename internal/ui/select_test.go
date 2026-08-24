@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"claude-sidecar/internal/attrib"
-	"claude-sidecar/internal/session"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/attrib"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/session"
 )
 
 func toolsModel() Model {

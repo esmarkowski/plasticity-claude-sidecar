@@ -11,8 +11,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"claude-sidecar/internal/event"
-	"claude-sidecar/internal/ui"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/ui"
 )
 
 // watch runs the live dashboard.

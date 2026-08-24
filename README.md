@@ -1,17 +1,23 @@
-# claude-sidecar
+# plasticity-claude-sidecar
+
+The `sidecar` module for [`plst`](https://github.com/esmarkowski/plasticity).
+
+```sh
+plst install esmarkowski/plasticity-claude-sidecar
+plst sidecar start
+```
 
 A debugging companion for Claude Code. It answers one question the harness does
 not: **what is actually filling the context window right now, and why.**
 
 ```
-sidecar open --dev     # live dashboard in its own Ghostty window, hot-reloading
-sidecar open           # same, without the rebuild loop
-sidecar watch --follow # in the current terminal
-sidecar report --detail
-sidecar report --audit # per-request residual — the engine's own regression check
-sidecar probe          # read Claude Code's /context accounting and cache it
-sidecar install        # register the hooks in ~/.claude/settings.json
-sidecar events -n 20   # raw hook log
+plst sidecar start           # live dashboard in its own Ghostty window
+plst sidecar watch --follow  # the same dashboard in the current terminal
+plst sidecar report --detail
+plst sidecar report --audit  # per-request residual — the engine's own regression check
+plst sidecar probe           # read Claude Code's /context accounting and cache it
+plst sidecar install         # register the hooks in ~/.claude/settings.json
+plst sidecar events -n 20    # raw hook log
 ```
 
 ## How it gets its numbers
@@ -37,7 +43,7 @@ carries the load reason — so a rule pulled in by a glob match shows up with th
 file that triggered it, and with a count, since a broad glob is charged again on
 every match.
 
-**Claude Code's own `/context`**, via `sidecar probe`. It reports the system
+**Claude Code's own `/context`**, via `plst sidecar probe`. It reports the system
 prompt, the tool schemas, and per-file memory and per-skill costs from the
 harness's own tokenizer. Those are the largest and least visible part of the
 window. Without a probe they have to be inferred by subtraction and collapse
@@ -47,7 +53,7 @@ into one opaque row; with one, they are measured.
 
 Claude's tokenizer is not public, so message text is estimated from character
 density — and that estimate was wrong by 35% in the first cut, in the flattering
-direction. `sidecar report --audit` is what found it: it plots, per request,
+direction. `plst sidecar report --audit` is what found it: it plots, per request,
 what we could measure against what the API billed. The system prompt does not
 change during a session, so if attribution were complete that residual would be
 flat. It climbed.
@@ -66,7 +72,7 @@ constant matching what `/context` independently reports.
 ## Architecture
 
 ```
-hook fires ──► sidecar emit ──► ~/.claude/sidecar/events.jsonl ──fsnotify──► sidecar watch
+hook fires ──► plst-sidecar emit ──► ~/.claude/sidecar/events.jsonl ──fsnotify──► the dashboard
                (~2ms, one O_APPEND write, then exit 0)
 ```
 

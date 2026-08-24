@@ -4,11 +4,11 @@ import (
 	"os"
 	"sync"
 
-	"claude-sidecar/internal/attrib"
-	"claude-sidecar/internal/event"
-	"claude-sidecar/internal/harness"
-	"claude-sidecar/internal/session"
-	"claude-sidecar/internal/transcript"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/attrib"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/harness"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/session"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/transcript"
 )
 
 // summary is just enough of a session's attribution to draw its bar in the

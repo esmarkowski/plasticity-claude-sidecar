@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"claude-sidecar/internal/attrib"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/attrib"
 )
 
 // stackedBar draws the whole composition as one bar, each category in its own

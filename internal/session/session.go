@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
 )
 
 // Session is one Claude Code conversation the dashboard can display.

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"claude-sidecar/internal/harness"
-	"claude-sidecar/internal/transcript"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/harness"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/transcript"
 )
 
 // lineTokensOld is the counter lineItems replaced, kept here as the oracle. The

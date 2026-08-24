@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 )
 
 // openWindow launches the dashboard in its own Ghostty window.
@@ -43,9 +42,9 @@ func windowCommand(dev bool) (string, error) {
 		}
 		return fmt.Sprintf("cd %q && mise run dev", root), nil
 	}
-	home, err := os.UserHomeDir()
+	self, err := selfPath()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "bin", "sidecar") + " watch --follow", nil
+	return fmt.Sprintf("%q watch --follow", self), nil
 }

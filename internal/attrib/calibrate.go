@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
 )
 
 // Calibration converts this program's character-density estimates into real

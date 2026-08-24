@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"claude-sidecar/internal/attrib"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/attrib"
 )
 
 // A panel costs 2 columns of border plus 2 of padding. lipgloss sizes a style

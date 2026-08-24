@@ -6,11 +6,11 @@ import (
 	"os"
 	"strings"
 
-	"claude-sidecar/internal/attrib"
-	"claude-sidecar/internal/event"
-	"claude-sidecar/internal/harness"
-	"claude-sidecar/internal/session"
-	"claude-sidecar/internal/transcript"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/attrib"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/harness"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/session"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/transcript"
 )
 
 // report prints the context breakdown as plain text. Deliberately built before

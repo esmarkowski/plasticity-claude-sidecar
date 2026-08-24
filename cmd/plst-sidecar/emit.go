@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
 )
 
 // maxStdin bounds what we will read from a hook. A PostToolUse payload carries

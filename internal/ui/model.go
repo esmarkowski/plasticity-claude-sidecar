@@ -10,11 +10,11 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"claude-sidecar/internal/attrib"
-	"claude-sidecar/internal/event"
-	"claude-sidecar/internal/harness"
-	"claude-sidecar/internal/session"
-	"claude-sidecar/internal/transcript"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/attrib"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/harness"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/session"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/transcript"
 )
 
 // Tab is one view of the session.

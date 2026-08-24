@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"claude-sidecar/internal/attrib"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/attrib"
 )
 
 // Colors are AdaptiveColor throughout so the dashboard is legible in a light or

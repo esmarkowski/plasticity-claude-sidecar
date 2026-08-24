@@ -1,4 +1,4 @@
-module claude-sidecar
+module github.com/esmarkowski/plasticity-claude-sidecar
 
 go 1.27.0
 

@@ -1,9 +1,9 @@
 package attrib
 
 import (
-	"claude-sidecar/internal/event"
-	"claude-sidecar/internal/harness"
-	"claude-sidecar/internal/transcript"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/harness"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/transcript"
 )
 
 // AuditPoint compares what we could measure against what the API actually

@@ -11,12 +11,19 @@ golangci-lint = "2.13.1"
 watchexec = "2.6.1"
 
 [tasks.build]
-description = "Build the sidecar binary into ./bin"
-run = "go build -o bin/sidecar ./cmd/sidecar"
+description = "Build the module binary into ./bin"
+run = "go build -o bin/plst-sidecar ./cmd/plst-sidecar"
 
 [tasks.install]
-description = "Build and install to ~/.local/bin, where the hooks reference it by absolute path"
-run = "go build -o $HOME/.local/bin/sidecar ./cmd/sidecar"
+description = "Build into plst's module directory, so `plst sidecar` runs this build"
+# PLST_MODULE_DIR if plst says where, the default if not. Nothing here decides
+# the location: plst owns that, and this task only has to agree with it.
+run = """
+dir="${PLST_MODULE_DIR:-${PLST_HOME:-$HOME/.plasticity}/modules}"
+mkdir -p "$dir"
+go build -o "$dir/plst-sidecar" ./cmd/plst-sidecar
+echo "installed $dir/plst-sidecar"
+"""
 
 [tasks.test]
 description = "Run the test suite against the transcript fixtures"
@@ -29,22 +36,23 @@ run = "golangci-lint run"
 description = "Measure per-hook emit overhead — it is paid on every hook of every turn"
 # Not hyperfine: it publishes no darwin-arm64 asset, so mise resolves it to the
 # x86_64 build and it will not run here at all.
-run = "go test -run '^$' -bench BenchmarkEmit -benchtime 200x ./cmd/sidecar"
+run = "go test -run '^$' -bench BenchmarkEmit -benchtime 200x ./cmd/plst-sidecar"
 
 [tasks.report]
 description = "Plain-text context attribution for the active session"
-run = "bin/sidecar report"
+run = "bin/plst-sidecar report"
 
 [tasks.watch]
 description = "Run the dashboard in this terminal instead of spawning a Ghostty window"
-run = "bin/sidecar watch --follow"
+run = "bin/plst-sidecar watch --follow"
 
 [tasks.dev]
 description = "Hot-reload loop: rebuild and restart the dashboard on every source change"
 run = """
+dir="${PLST_MODULE_DIR:-${PLST_HOME:-$HOME/.plasticity}/modules}"
 watchexec --restart --stop-signal SIGTERM --stop-timeout 2s \
   --watch cmd --watch internal --exts go \
-  -- 'go build -o bin/sidecar ./cmd/sidecar \
-      && go build -o $HOME/.local/bin/sidecar ./cmd/sidecar \
-      && exec bin/sidecar watch --follow'
+  -- "go build -o bin/plst-sidecar ./cmd/plst-sidecar \
+      && go build -o $dir/plst-sidecar ./cmd/plst-sidecar \
+      && exec bin/plst-sidecar watch --follow"
 """

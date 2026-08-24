@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
 )
 
 // A probe starts a Claude Code session, so it is cached hard. The things it

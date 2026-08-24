@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"claude-sidecar/internal/attrib"
-	"claude-sidecar/internal/event"
-	"claude-sidecar/internal/session"
-	"claude-sidecar/internal/transcript"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/attrib"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/session"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/transcript"
 )
 
 // Agent is one subagent spawned by the session under inspection.

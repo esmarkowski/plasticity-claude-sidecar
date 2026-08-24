@@ -5,7 +5,7 @@ import (
 	"os"
 	"strconv"
 
-	"claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
 )
 
 // events dumps the raw log. The crudest possible view, and the first one that

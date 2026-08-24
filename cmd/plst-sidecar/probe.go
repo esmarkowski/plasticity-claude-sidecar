@@ -5,9 +5,9 @@ import (
 	"os"
 	"time"
 
-	"claude-sidecar/internal/event"
-	"claude-sidecar/internal/harness"
-	"claude-sidecar/internal/session"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/harness"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/session"
 )
 
 // probeTimeout is generous: a probe starts a real Claude Code session, and

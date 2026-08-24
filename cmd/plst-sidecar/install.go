@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"claude-sidecar/internal/event"
-	"claude-sidecar/internal/settings"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/event"
+	"github.com/esmarkowski/plasticity-claude-sidecar/internal/settings"
 )
 
 // install registers the sidecar's hooks in ~/.claude/settings.json.
@@ -46,19 +46,28 @@ func install(args []string) int {
 	return 0
 }
 
-// installedPath resolves where the hook should point. It must be a stable
-// absolute path that outlives a rebuild, not the temporary binary in ./bin —
-// otherwise `mise run dev` would leave the hooks pointing at a file that moves.
+// installedPath resolves where the hook should point: at this binary, wherever
+// plst put it.
+//
+// It has to be an absolute path in the settings file. A hook runs under /bin/sh
+// with none of the user's shell activation, so a bare name on PATH is the thing
+// that fails with exit 127 — the exact failure this program exists to surface.
+// The path is discovered rather than assumed, so installing from a module
+// directory, a dev build, or a release all register the binary that actually ran.
 func installedPath() (string, error) {
-	home, err := os.UserHomeDir()
+	self, err := selfPath()
 	if err != nil {
 		return "", err
 	}
-	p := filepath.Join(home, ".local", "bin", "sidecar")
-	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("%s does not exist yet — run `mise run install` first", p)
+	// Registering the dev build would leave the hooks pointing into a working
+	// tree, which is fine while developing and wrong on a real install. Worth
+	// saying rather than silently doing.
+	if wd, err := os.Getwd(); err == nil {
+		if rel, err := filepath.Rel(wd, self); err == nil && !strings.HasPrefix(rel, "..") {
+			fmt.Fprintf(os.Stderr, "note: registering the build in this working tree (%s)\n", rel)
+		}
 	}
-	return p, nil
+	return self, nil
 }
 
 // confirm asks with gum when it is available and falls back to a plain prompt.
