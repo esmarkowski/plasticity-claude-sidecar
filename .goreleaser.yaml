@@ -22,7 +22,7 @@ archives:
   - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files: [README.md, LICENSE*]
 
-checksums:
+checksum:
   name_template: checksums.txt
 
 changelog:
