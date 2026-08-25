@@ -69,6 +69,32 @@ reasoning tokens **accumulate** in the window rather than being dropped per
 turn. Treating them as cumulative fits better (R² 0.998 vs 0.997) and recovers a
 constant matching what `/context` independently reports.
 
+## Images cost pixels, not base64
+
+A tool result carrying a screenshot stores it as base64, and running the
+character-density estimator over that charged 120,000 tokens for a 1400×1000 PNG
+whose real cost is about 1,600 — sixty-five times over, six times in one session.
+
+That did not merely make one row wrong. It pushed the session's estimate past its
+real context, which put the fitted scale below the floor where a fit is believed,
+so no correction was applied at all and the overshoot was absorbed by shrinking
+every other category to fit. One misread row had corrupted the whole report.
+
+An image is now priced the way the API prices it: the header is decoded far enough
+to read the dimensions, resized down to a 1568-pixel long edge and a ceiling of
+about 1,600 tokens, then charged at 750 pixels a token. PNG and JPEG headers are
+read; anything else is charged the ceiling, because being wrong high by a few
+hundred tokens is containable and being wrong by the length of a base64 string is
+what broke the calibration.
+
+On the session that exposed it, the effect of the fix:
+
+| | before | after |
+|---|---|---|
+| `Read` | 721,858 tokens, 164% of its category | 12,696, 6% |
+| fitted scale | rejected — 0.508, under the floor | 1.288, R² 0.9994 over 746 requests |
+| unattributed | absorbed by shrinking every bucket | 1,118 tokens, 0.1% |
+
 ## Memory
 
 The rules tab lists the project's memory store under the instruction files.

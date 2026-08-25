@@ -169,7 +169,7 @@ func lineItems(l transcript.Line, snap harness.Snapshot, toolByID map[string]str
 			if label == "" {
 				label = "tool result"
 			}
-			out = append(out, Item{Name: label, Tokens: Estimate(resultText(b))})
+			out = append(out, Item{Name: label, Tokens: resultTokens(b)})
 		}
 	}
 	return out

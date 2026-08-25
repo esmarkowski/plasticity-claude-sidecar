@@ -272,7 +272,7 @@ func AnalyzeWith(lines []transcript.Line, events []event.Event, snap harness.Sna
 					// Credited to the same family as the call it answers: what a
 					// command cost is mostly what came back from it.
 					addWithin(BucketToolResults, name, familyByID[blk.ToolUseID],
-						Estimate(resultText(blk)))
+						resultTokens(blk))
 				}
 			}
 		}
@@ -417,9 +417,82 @@ func resultText(b transcript.Block) string {
 	}
 	var v any
 	if err := json.Unmarshal(b.Content, &v); err == nil {
-		return Strings(v)
+		return Strings(withoutImages(v))
 	}
 	return string(b.Content)
+}
+
+// resultTokens is what a tool result costs the context window.
+//
+// Text and images are counted differently because they are charged differently,
+// and this is the one place that has to know it. Both halves are needed: a
+// screenshot arrives beside the text that introduces it, and a result is often
+// several images.
+func resultTokens(b transcript.Block) int {
+	return Estimate(resultText(b)) + imageTokens(b.Content)
+}
+
+// imageTokens totals the images in a tool result's content.
+func imageTokens(content json.RawMessage) int {
+	if len(content) == 0 {
+		return 0
+	}
+	var blocks []struct {
+		Type   string `json:"type"`
+		Source struct {
+			Type      string `json:"type"`
+			MediaType string `json:"media_type"`
+			Data      string `json:"data"`
+		} `json:"source"`
+	}
+	if json.Unmarshal(content, &blocks) != nil {
+		return 0
+	}
+	n := 0
+	for _, blk := range blocks {
+		if blk.Type != "image" {
+			continue
+		}
+		n += ImageTokens(blk.Source.Data)
+	}
+	return n
+}
+
+// withoutImages strips image payloads before the text estimator sees them.
+//
+// Strings walks every string in the structure, which is the right default for an
+// attachment shape nobody has enumerated — and exactly wrong for a base64 image,
+// where it hands the estimator half a megabyte of encoding to charge for. The
+// image is removed here and counted properly by imageTokens.
+func withoutImages(v any) any {
+	switch t := v.(type) {
+	case []any:
+		out := make([]any, 0, len(t))
+		for _, e := range t {
+			if kept := withoutImages(e); kept != nil {
+				out = append(out, kept)
+			}
+		}
+		return out
+	case map[string]any:
+		if kind, _ := t["type"].(string); kind == "image" {
+			return nil
+		}
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			// A payload under any of the keys an encoded image is carried by.
+			// Dropped by key as well as by block type, because a shape that puts
+			// the data somewhere unexpected should still not be measured as prose.
+			if k == "data" || k == "base64" {
+				continue
+			}
+			if kept := withoutImages(e); kept != nil {
+				out[k] = kept
+			}
+		}
+		return out
+	}
+	return v
 }
 
 // memory sizes the instruction files in context.
