@@ -140,7 +140,6 @@ func (m Model) agentsView(w int) string {
 	}
 
 	var b strings.Builder
-	missing := 0
 	header := pad("", gutter+markerW) + pad("agent", typeW)
 	if taskW > 0 {
 		header += pad("task", taskW)
@@ -165,7 +164,9 @@ func (m Model) agentsView(w int) string {
 			reqs = dimStyle.Render(fmt.Sprint(a.Requests))
 			bar = stackedGauge(a.Report.Slices, a.Report.Total, window, barW)
 		} else {
-			missing++
+			// Only a running agent reaches here: its transcript is not written
+			// yet. Agents whose transcript is genuinely absent are not listed
+			// at all, and are reported as a count below.
 			bar = faintStyle.Render(strings.Repeat("·", barW))
 		}
 
@@ -195,13 +196,15 @@ func (m Model) agentsView(w int) string {
 
 	b.WriteString("\n" + faintStyle.Render(wrap(
 		"bar length is how full that agent's own window is; colours match the context legend.", w)))
-	if missing > 0 {
-		// Worth saying, because the alternative reading — that these agents ran
-		// with an empty context — would be wrong.
+	if m.untracedAgents > 0 {
+		// Said once rather than listed. A row for one of these would carry eight
+		// characters of an id and nothing else, which reads as an agent that ran
+		// and returned nothing — a claim about the agent, when what is missing is
+		// the file.
 		b.WriteString("\n" + faintStyle.Render(wrap(fmt.Sprintf(
-			"%d agent%s known only from hook events: no transcript under the session's "+
-				"subagents/ directory, so neither its type nor its context could be read.",
-			missing, plural(missing)), w)))
+			"%d agent%s ran with no transcript at the path SubagentStop named, so neither "+
+				"type, task, nor context could be read. Not listed above.",
+			m.untracedAgents, plural(m.untracedAgents)), w)))
 	}
 	return b.String()
 }
