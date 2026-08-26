@@ -47,9 +47,12 @@ type Model struct {
 	audit    []attrib.AuditPoint
 	snapshot harness.Snapshot
 	agents   []Agent
-	hooks    []transcript.HookRun
-	memory   memory.Store
-	summary  map[string]summary
+	// untracedAgents ran but left no transcript, so there is nothing to show of
+	// them but a count.
+	untracedAgents int
+	hooks          []transcript.HookRun
+	memory         memory.Store
+	summary        map[string]summary
 
 	tab    Tab
 	picker bool
@@ -203,10 +206,12 @@ type loadedMsg struct {
 	audit    []attrib.AuditPoint
 	snapshot harness.Snapshot
 	agents   []Agent
-	hooks    []transcript.HookRun
-	memory   memory.Store
-	summary  map[string]summary
-	err      error
+
+	untracedAgents int
+	hooks          []transcript.HookRun
+	memory         memory.Store
+	summary        map[string]summary
+	err            error
 }
 
 func (m Model) load() tea.Cmd {
@@ -260,6 +265,7 @@ func analyze(want string, follow bool) loadedMsg {
 		if rep.CWD == "" {
 			rep.CWD = cur.CWD
 		}
+		ags, untraced := loadAgents(cur, evs, lines)
 		return loadedMsg{
 			events:   evs,
 			sessions: sessions,
@@ -267,7 +273,10 @@ func analyze(want string, follow bool) loadedMsg {
 			report:   rep,
 			audit:    attrib.Audit(lines, evs, snap),
 			snapshot: snap,
-			agents:   loadAgents(cur, evs, lines),
+			agents:   ags,
+			// Agents that left no transcript are not listed — see loadAgents —
+			// so the count has to travel separately to be reported at all.
+			untracedAgents: untraced,
 			// Hook failures come from the transcript rather than our own log:
 			// a hook that fails to start never writes anything, so only Claude
 			// Code's own record of it exists.
@@ -332,6 +341,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.audit = msg.audit
 		m.snapshot = msg.snapshot
 		m.agents = msg.agents
+		m.untracedAgents = msg.untracedAgents
 		m.hooks = msg.hooks
 		m.memory = msg.memory
 		m.summary = msg.summary

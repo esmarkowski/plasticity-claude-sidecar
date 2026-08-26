@@ -190,3 +190,51 @@ func Title(lines []Line) string {
 	}
 	return generated
 }
+
+// LastAssistantText is what a subagent actually returned to its parent: the
+// final assistant message of its own transcript.
+//
+// Read from the transcript rather than from the SubagentStop hook's
+// last_assistant_message, which was measured and found to carry the *parent*
+// conversation's last message instead — in the run that prompted this, a user
+// turn ("go ahead, make the changes and restack") reported as a 38-byte agent
+// reply. The agent's own transcript cannot be wrong about what the agent said.
+func LastAssistantText(lines []Line) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if lines[i].Message == nil || lines[i].Message.Role != "assistant" {
+			continue
+		}
+		var sb strings.Builder
+		for _, b := range lines[i].Message.Blocks() {
+			if b.Type == "text" {
+				sb.WriteString(b.Text)
+			}
+		}
+		if strings.TrimSpace(sb.String()) != "" {
+			return sb.String()
+		}
+	}
+	return ""
+}
+
+// Span is the first and last timestamps a transcript carries.
+//
+// For a subagent this is how long it ran, and it is the only honest source of
+// that: SubagentStart is registered and handled but never actually fires, so
+// pairing start against stop yields nothing. A file's mtime says when it
+// finished and nothing about when it began, which is why that was never used
+// for this.
+func Span(lines []Line) (start, end time.Time, ok bool) {
+	for _, l := range lines {
+		if l.Timestamp.IsZero() {
+			continue
+		}
+		if start.IsZero() || l.Timestamp.Before(start) {
+			start = l.Timestamp
+		}
+		if l.Timestamp.After(end) {
+			end = l.Timestamp
+		}
+	}
+	return start, end, !start.IsZero() && !end.IsZero()
+}
