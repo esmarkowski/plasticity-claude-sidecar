@@ -17,9 +17,6 @@ const (
 	panelChrome = 4
 )
 
-// defaultWindow is assumed only until a harness probe reports the real limit.
-const defaultWindow = 1_000_000
-
 // panelWidth converts a text width into the Width() a panel needs to end up
 // exactly panelChrome wider.
 func panelWidth(text int) int { return text + panelChrome - panelBorder }
@@ -118,9 +115,6 @@ func (m Model) header(w int) string {
 	}
 
 	window := r.Window
-	if window == 0 {
-		window = defaultWindow
-	}
 	pct := 0.0
 	if window > 0 {
 		pct = float64(r.Total) / float64(window) * 100

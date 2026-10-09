@@ -65,6 +65,39 @@ func (s Snapshot) Static() int {
 // OK reports whether this snapshot parsed into something usable.
 func (s Snapshot) OK() bool { return s.Window > 0 && len(s.Categories) > 0 }
 
+// StandardWindow is the context limit of a model not running with the 1M
+// option, which /context marks by appending "[1m]" to the model name.
+const StandardWindow = 200_000
+
+// WindowFor is the context limit of a conversation running model, which has
+// used tokens of it.
+//
+// The probe measures one model: the default for its directory. A subagent
+// running that model gets the same window, but one spawned on another model
+// does not inherit the parent's 1M option. Transcripts record the bare model
+// name without the "[1m]" marker, so the probe is the only place the option
+// is visible. A conversation already past the standard limit is evidence on
+// its own.
+func (s Snapshot) WindowFor(model string, used int) int {
+	window := StandardWindow
+	if s.OK() && (model == "" || model == BaseModel(s.Model)) {
+		window = s.Window
+	}
+	if used > window {
+		window = 1_000_000
+	}
+	return window
+}
+
+// BaseModel strips the option suffix /context appends: "claude-opus-5[1m]"
+// is "claude-opus-5" as a transcript records it.
+func BaseModel(model string) string {
+	if i := strings.Index(model, "["); i >= 0 {
+		return model[:i]
+	}
+	return model
+}
+
 // Probe starts a throwaway Claude Code session in dir and reads /context.
 //
 // The session is real: it appears in the transcript directory and costs a

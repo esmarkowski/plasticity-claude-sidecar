@@ -103,7 +103,8 @@ type Report struct {
 	// ThinkingBlocks counts reasoning blocks in context whose text the
 	// transcript does not retain.
 	ThinkingBlocks int
-	// Window is the model's context limit, when known.
+	// Window is the model's context limit: probed when the snapshot measured
+	// this model, the standard limit otherwise.
 	Window int
 	// Scale is the fitted correction applied to estimated buckets, and R2 how
 	// well that fit describes the session. Surfaced rather than hidden so a bad
@@ -161,10 +162,11 @@ func AnalyzeWith(lines []transcript.Line, events []event.Event, snap harness.Sna
 	usage, model, _ := transcript.LatestUsage(chain)
 
 	r := Report{
-		Model: model,
-		Usage: usage,
-		Total: usage.ContextTokens(),
-		Turns: len(transcript.Requests(chain)),
+		Model:  model,
+		Usage:  usage,
+		Total:  usage.ContextTokens(),
+		Window: snap.WindowFor(model, usage.ContextTokens()),
+		Turns:  len(transcript.Requests(chain)),
 		// Titles are recorded on their own lines, outside the message chain, so
 		// they come from the whole file rather than from what is still in
 		// context.
@@ -303,7 +305,6 @@ func AnalyzeWith(lines []transcript.Line, events []event.Event, snap harness.Sna
 	if snap.OK() {
 		r.Probed = true
 		r.ProbedAt = snap.ProbedAt.Local().Format("Jan 2 15:04")
-		r.Window = snap.Window
 		// The system prompt and tool schemas are constants the transcript never
 		// records; the snapshot is the only direct measurement of them.
 		add(BucketSystem, "system prompt", snap.Categories[harness.CatSystemPrompt])

@@ -131,14 +131,6 @@ func (m Model) agentsView(w int) string {
 	taskW := minInt(maxInt(w-fixed-minBar, 0), 44)
 	barW := maxInt(w-fixed-taskW, 6)
 
-	// A subagent runs the same model as its parent, so it has the same window.
-	// Without one, stackedGauge treats the total as the whole window and every
-	// agent's bar reads as completely full regardless of size.
-	window := m.report.Window
-	if window == 0 {
-		window = defaultWindow
-	}
-
 	var b strings.Builder
 	header := pad("", gutter+markerW) + pad("agent", typeW)
 	if taskW > 0 {
@@ -162,6 +154,11 @@ func (m Model) agentsView(w int) string {
 		if a.Analyzed {
 			ctx = numStyle.Render(comma(a.Report.Total))
 			reqs = dimStyle.Render(fmt.Sprint(a.Requests))
+			// Analyzed without the parent's snapshot, whose system prompt and
+			// tools are not the subagent's, so the window is worked out here: a
+			// subagent on the probed model shares its 1M option, one on any
+			// other model does not.
+			window := m.snapshot.WindowFor(a.Report.Model, a.Report.Total)
 			bar = stackedGauge(a.Report.Slices, a.Report.Total, window, barW)
 		} else {
 			// Only a running agent reaches here: its transcript is not written
@@ -839,9 +836,6 @@ func (m Model) pickerView(termWidth int) string {
 			bar = faintStyle.Render(strings.Repeat("·", barW))
 		default:
 			window := sum.Window
-			if window == 0 {
-				window = defaultWindow
-			}
 			figure = thresholdStyle(sum.Total, window).Render(
 				padLeft(fmt.Sprintf("%s / %s", compact(sum.Total), compact(window)), numW))
 			bar = stackedGauge(sum.Slices, sum.Total, window, barW)
