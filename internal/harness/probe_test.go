@@ -103,3 +103,27 @@ func TestParseRejectsGarbage(t *testing.T) {
 		t.Error("garbage parsed into a usable snapshot")
 	}
 }
+
+// The probe measures the directory's default model. A subagent on another
+// model must not inherit its 1M option.
+func TestWindowForOnlyGivesTheProbedWindowToTheProbedModel(t *testing.T) {
+	s := Snapshot{Model: "claude-opus-5[1m]", Window: 1_000_000, Categories: map[string]int{CatSystemPrompt: 1}}
+	cases := []struct {
+		name  string
+		snap  Snapshot
+		model string
+		used  int
+		want  int
+	}{
+		{"probed model", s, "claude-opus-5", 50_000, 1_000_000},
+		{"another model", s, "claude-sonnet-5-5", 50_000, StandardWindow},
+		{"no usage yet", s, "", 0, 1_000_000},
+		{"no probe", Snapshot{}, "claude-opus-5", 50_000, StandardWindow},
+		{"past the standard limit", Snapshot{}, "claude-opus-5", 397_828, 1_000_000},
+	}
+	for _, c := range cases {
+		if got := c.snap.WindowFor(c.model, c.used); got != c.want {
+			t.Errorf("%s: WindowFor(%q, %d) = %d, want %d", c.name, c.model, c.used, got, c.want)
+		}
+	}
+}
